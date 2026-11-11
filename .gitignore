@@ -1,0 +1,26 @@
+# Gradle / Android 构建产物
+.gradle/
+build/
+app/build/
+local.properties
+*.apk
+*.aab
+
+# 签名相关：绝不提交
+keystore.properties
+key.properties
+*.jks
+*.keystore
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.iml
+.DS_Store
+
+# 日志
+*.log
+
+# AI 协作本地文件：不进公开仓库
+.workbuddy/

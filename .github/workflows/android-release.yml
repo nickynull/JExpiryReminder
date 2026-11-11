@@ -1,0 +1,181 @@
+name: android-release
+
+# 发布流程（与桌面端仓库 JToolsBox 的 release-please 流程对齐）：
+#   1. 日常按 Conventional Commits 提交并推 main（feat: / fix: / chore: …）
+#   2. release-please 自动开/更新 release PR（改 versionName + 写 CHANGELOG）
+#   3. 合并该 PR → 同一次运行里接着构建签名 APK，并附加到新 Release
+#   4. 兜底：直接推 v* 标签同样会构建并附加（此时 release-please 不参与）
+#   5. 手动 Run workflow 只构建并产出 artifact，不改动 Release
+#
+# 注意：release-please 用 GITHUB_TOKEN 推的 tag 不会触发新的 workflow 运行
+# （GitHub 会抑制 token 产生的连锁事件），所以构建必须挂在 needs 上跟在同一个 run 里，
+# 不能靠 `push: tags` 去接。保留 tags 触发只是为了「手动打 tag」这条兜底路径。
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  # release-please 需要创建 / 更新 release PR
+  pull-requests: write
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  # 不用 cancel-in-progress：Release 可能已被 release-please 建好，
+  # 中途取消会留下一个没有附件的空 Release
+  cancel-in-progress: false
+
+jobs:
+  release_please:
+    name: 计算版本与 release PR
+    # 只在 push 到分支时运行；手动触发与推 tag 都不该改版本
+    if: github.event_name == 'push' && github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - name: 运行 release-please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  android:
+    name: 构建签名 APK
+    needs: release_please
+    # release_please 被跳过（推 tag / 手动触发）时 always() 仍会放行本 job，
+    # 再由下面的条件决定到底跑不跑
+    if: |
+      always() && (
+        needs.release_please.outputs.release_created == 'true' ||
+        github.ref_type == 'tag' ||
+        github.event_name == 'workflow_dispatch'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      signed: ${{ steps.signcheck.outputs.signed }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 配置 Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 注入签名配置
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::未配置 ANDROID_KEYSTORE_BASE64，本次产出未签名 APK（debug 签名），无法作为正式版分发"
+            exit 0
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$RUNNER_TEMP/release.jks" "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" \
+            > keystore.properties
+          echo "已注入签名配置（密钥库仅存在于 runner 临时目录）"
+
+      - name: 单元测试
+        run: ./gradlew testDebugUnitTest
+
+      - name: 构建 APK
+        run: |
+          # 依赖下载偶发失败（Gradle 发行包 / Maven 镜像），带退避重试
+          for attempt in 1 2 3; do
+            echo "::group::构建尝试 $attempt / 3"
+            if ./gradlew assembleRelease; then
+              echo "::endgroup::"
+              echo "构建成功"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "::warning::第 $attempt 次构建失败，30 秒后重试"
+            sleep 30
+          done
+          echo "::error::构建连续 3 次失败"
+          exit 1
+
+      - name: 整理产物
+        id: meta
+        run: |
+          VERSION=$(sed -nE 's/.*versionName = "([^"]+)".*/\1/p' app/build.gradle.kts | head -1)
+          SRC=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          NAME="JExpiryReminder-${VERSION}.apk"
+          mkdir -p out
+          cp "$SRC" "out/$NAME"
+          (cd out && sha256sum "$NAME" > "$NAME.sha256")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "apk_name=$NAME" >> "$GITHUB_OUTPUT"
+          ls -lh out
+
+      - name: 校验签名
+        id: signcheck
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
+          if "$APKSIGNER" verify --print-certs "out/${{ steps.meta.outputs.apk_name }}" > /tmp/certs.txt 2>&1; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            grep -i 'SHA-256' /tmp/certs.txt | head -2
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::APK 未签名，跳过 Release 附加；请配置 4 个签名 Secrets 后重跑"
+          fi
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: JExpiryReminder-${{ steps.meta.outputs.version }}
+          path: out/*
+          if-no-files-found: error
+          retention-days: 30
+
+      # Release 有两种来源：release-please 建好的（分支流程），或本步骤兜底创建（直接推 tag）。
+      # 所以 TAG 优先取 release_please 的 tag_name——分支流程下 github.ref 是 main，
+      # 用 ref_name 会拼出一个不存在的 "main" 标签。
+      - name: 附加到 Release
+        if: |
+          steps.signcheck.outputs.signed == 'true' && (
+            needs.release_please.outputs.release_created == 'true' ||
+            startsWith(github.ref, 'refs/tags/')
+          )
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release_please.outputs.tag_name || github.ref_name }}
+        run: |
+          gh release view "$TAG" > /dev/null 2>&1 \
+            || gh release create "$TAG" --title "JExpiryReminder $TAG" --generate-notes
+          # release-please 默认标题是裸版本号，统一成带产品名的形式
+          gh release edit "$TAG" --title "JExpiryReminder $TAG"
+          gh release upload "$TAG" out/*.apk out/*.sha256 --clobber
+          echo "已附加到 Release $TAG"
+
+      - name: 写入任务摘要
+        if: always()
+        run: |
+          {
+            echo "### Android 构建结果"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "| --- | --- |"
+            echo "| 版本 | \`${{ steps.meta.outputs.version }}\` |"
+            echo "| 已签名 | \`${{ steps.signcheck.outputs.signed }}\` |"
+            echo "| Release | \`${{ needs.release_please.outputs.tag_name || github.ref_name }}\` |"
+            echo "| 触发 | \`${{ github.event_name }}\` / \`${{ github.ref_name }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
