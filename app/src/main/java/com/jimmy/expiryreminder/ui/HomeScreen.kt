@@ -20,6 +20,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -35,6 +36,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -44,8 +46,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -85,6 +89,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -102,6 +107,7 @@ import com.jimmy.expiryreminder.core.ExpiryItem
 import com.jimmy.expiryreminder.core.ExpiryStatus
 import com.jimmy.expiryreminder.core.ExpiryStore
 import com.jimmy.expiryreminder.core.SettingsStore
+import com.jimmy.expiryreminder.core.Spaces
 import com.jimmy.expiryreminder.core.remindDaysSummary
 import com.jimmy.expiryreminder.notify.ReminderService
 import kotlinx.coroutines.launch
@@ -111,20 +117,32 @@ import kotlin.math.abs
 private val SINGLE_LINE_WS = Regex("\\s+")
 
 /**
- * 首页筛选状态（搜索词 + 分类）：由导航层持有，进出编辑页后回来仍保留。
- * 用 listSaver 存两颗字符串，进程被回收再恢复也不丢。
+ * 首页筛选状态（搜索词 + 分类 + 空间）：由导航层持有，进出编辑页后回来仍保留。
+ * 用 listSaver 存字符串，进程被回收再恢复也不丢。
  */
 @Stable
-class HomeFilterState(keyword: String = "", category: String = "all") {
+class HomeFilterState(
+    keyword: String = "",
+    category: String = "all",
+    space: String = Spaces.ALL,
+) {
     var keyword by mutableStateOf(keyword)
     var category by mutableStateOf(category)
+    /** 当前空间：列表、统计卡、分类计数都按它过滤；默认「全部空间」，含未分配。 */
+    var space by mutableStateOf(space)
 
     companion object {
         const val ALL = "all"
 
         val Saver = listSaver<HomeFilterState, String>(
-            save = { listOf(it.keyword, it.category) },
-            restore = { HomeFilterState(it[0], it[1]) },
+            save = { listOf(it.keyword, it.category, it.space) },
+            restore = {
+                HomeFilterState(
+                    keyword = it.getOrElse(0) { "" },
+                    category = it.getOrElse(1) { ALL },
+                    space = it.getOrElse(2) { Spaces.ALL },
+                )
+            },
         )
     }
 }
@@ -137,12 +155,17 @@ class HomeFilterState(keyword: String = "", category: String = "all") {
 @Composable
 fun HomeScreen(
     filter: HomeFilterState,
+    /** [defaultCategory] 为当前筛选的分类，「全部分类」时传 null；新建物品的空间默认为空。 */
     onAdd: (defaultCategory: String?) -> Unit,
     /** 图像识别入口：选图 → 识别 → 带结果进添加页。 */
     onOcr: (defaultCategory: String?) -> Unit,
     onEdit: (String) -> Unit,
     onSettings: () -> Unit,
     onCategories: () -> Unit,
+    /** 空间管理页。 */
+    onSpaces: () -> Unit,
+    /** 多选「分享」：把选中的物品带到跨设备传输页。 */
+    onShare: (List<String>) -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val store = ExpiryStore.get()
@@ -155,7 +178,14 @@ fun HomeScreen(
     var selectMode by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var pendingDelete by remember { mutableStateOf<ExpiryItem?>(null) }
+    // 多选批量操作弹窗
+    var batchSpaceDialog by remember { mutableStateOf(false) }
+    var batchCategoryDialog by remember { mutableStateOf(false) }
+    var batchDeleteDialog by remember { mutableStateOf(false) }
+    // 按空间分享
+    var shareSpaceDialog by remember { mutableStateOf(false) }
     var categoryMenuOpen by remember { mutableStateOf(false) }
+    var spaceMenuOpen by remember { mutableStateOf(false) }
     // 全屏图片查看器：paths + 起始下标，null = 未打开
     var viewer by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
 
@@ -191,10 +221,22 @@ fun HomeScreen(
         }
     }
 
-    // 先只按搜索词筛一遍：下拉里的分类计数 = 点进去后能看到的条数，与统计卡「全部」同一口径
-    val keywordMatched = remember(state, filter.keyword) {
+    // 当前空间被删掉时回落到「全部空间」（未分配是合法状态，不回落）
+    LaunchedEffect(state.spaces, state.spaceLabels) {
+        if (filter.space != Spaces.ALL &&
+            filter.space.isNotEmpty() &&
+            store.spaceOf(filter.space) == null
+        ) {
+            filter.space = Spaces.ALL
+            filter.category = HomeFilterState.ALL
+        }
+    }
+
+    // 先只按当前空间 + 搜索词筛一遍：下拉里的分类计数 = 点进去后能看到的条数，与统计卡「全部」同一口径
+    val spaceItems = remember(state, filter.space) { store.itemsInSpace(filter.space) }
+    val keywordMatched = remember(spaceItems, filter.keyword) {
         val kw = filter.keyword.trim().lowercase()
-        store.activeItems().filter { item ->
+        spaceItems.filter { item ->
             kw.isEmpty() || item.name.lowercase().contains(kw) || item.note.lowercase().contains(kw)
         }
     }
@@ -213,10 +255,10 @@ fun HomeScreen(
     val categoryLabel = if (filter.category == HomeFilterState.ALL) "全部分类"
     else store.categoryOptions().firstOrNull { it.id == filter.category }?.label ?: "全部分类"
 
-    // 可左右切换的分类环 =「全部分类」+ 至少有一条未归档记录的分类。
+    // 可左右切换的分类环 =「全部分类」+ 当前空间下至少有一条未归档记录的分类。
     // 空分类不进环，滑动不会切出一片空白；这里刻意不跟搜索词联动，避免搜索时环忽长忽短。
-    val switchableIds = remember(state) {
-        val counts = store.activeItems().groupingBy { it.category }.eachCount()
+    val switchableIds = remember(spaceItems) {
+        val counts = spaceItems.groupingBy { it.category }.eachCount()
         buildList {
             add(HomeFilterState.ALL)
             store.categoryOptions().forEach { if ((counts[it.id] ?: 0) > 0) add(it.id) }
@@ -281,8 +323,21 @@ fun HomeScreen(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            // 多选态下藏起搜索栏与新增/识别，底部完全让给列表，避免误触
-            if (!selectMode) {
+            // 多选态下藏起搜索栏与新增/识别，底部改放批量操作
+            if (selectMode) {
+                SelectionActionBar(
+                    canAct = selected.isNotEmpty(),
+                    onSpace = { batchSpaceDialog = true },
+                    onCategory = { batchCategoryDialog = true },
+                    onShare = {
+                        val ids = selected.toList()
+                        selectMode = false
+                        selected = emptySet()
+                        onShare(ids)
+                    },
+                    onDelete = { batchDeleteDialog = true },
+                )
+            } else {
                 HomeBottomBar(
                     keyword = filter.keyword,
                     onKeywordChange = { filter.keyword = it },
@@ -314,17 +369,19 @@ fun HomeScreen(
                             style = MaterialTheme.typography.titleMedium,
                             modifier = Modifier.weight(1f),
                         )
+                        // 全选/取消全选：列表当前筛选结果里的全部物品
                         TextButton(
-                            enabled = selected.isNotEmpty(),
                             onClick = {
-                                scope.launch {
-                                    store.removeItems(context, selected.toList())
-                                    selectMode = false
-                                    selected = emptySet()
+                                val all = filtered.map { it.id }.toSet()
+                                selected = if (selected.containsAll(all) && all.isNotEmpty()) {
+                                    emptySet()
+                                } else {
+                                    all
                                 }
                             },
                         ) {
-                            Text("删除", color = MaterialTheme.colorScheme.error)
+                            val all = filtered.map { it.id }.toSet()
+                            Text(if (selected.containsAll(all) && all.isNotEmpty()) "取消全选" else "全选")
                         }
                     }
                 }
@@ -349,6 +406,132 @@ fun HomeScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                        }
+                        // 空间切换：当前空间名 + 下拉（同时是空间管理的入口）
+                        Box {
+                            Surface(
+                                onClick = { spaceMenuOpen = true },
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.surface,
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp, MaterialTheme.colorScheme.outline,
+                                ),
+                            ) {
+                                Row(
+                                    Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Box(
+                                        Modifier
+                                            .size(8.dp)
+                                            .background(
+                                                hexColor(store.spaceColorOf(filter.space)),
+                                                CircleShape,
+                                            ),
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        store.spaceLabelOf(filter.space),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.widthIn(max = 88.dp),
+                                    )
+                                    Spacer(Modifier.width(2.dp))
+                                    Icon(
+                                        Icons.Filled.KeyboardArrowDown,
+                                        contentDescription = "切换空间",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                }
+                            }
+                            DropdownMenu(
+                                expanded = spaceMenuOpen,
+                                onDismissRequest = { spaceMenuOpen = false },
+                                shape = RoundedCornerShape(12.dp),
+                            ) {
+                                // 全部空间（默认）：所有空间 + 未分配的物品一起看
+                                DropdownMenuItem(
+                                    text = { Text(Spaces.ALL_LABEL) },
+                                    leadingIcon = {
+                                        Box(
+                                            Modifier.size(10.dp).background(
+                                                hexColor(store.spaceColorOf(Spaces.ALL)),
+                                                RoundedCornerShape(5.dp),
+                                            )
+                                        )
+                                    },
+                                    trailingIcon = { CountBadge(store.itemCountInSpace(Spaces.ALL)) },
+                                    onClick = {
+                                        if (filter.space != Spaces.ALL) {
+                                            filter.space = Spaces.ALL
+                                            filter.category = HomeFilterState.ALL
+                                        }
+                                        spaceMenuOpen = false
+                                    },
+                                )
+                                androidx.compose.material3.HorizontalDivider()
+                                for (space in store.spaceOptions()) {
+                                    DropdownMenuItem(
+                                        text = { Text(space.label) },
+                                        leadingIcon = {
+                                            Box(
+                                                Modifier.size(10.dp).background(
+                                                    hexColor(space.color), RoundedCornerShape(5.dp),
+                                                )
+                                            )
+                                        },
+                                        trailingIcon = {
+                                            CountBadge(store.itemCountInSpace(space.id))
+                                        },
+                                        onClick = {
+                                            if (filter.space != space.id) {
+                                                filter.space = space.id
+                                                // 分类计数跟着空间变，切空间后回到「全部分类」最不容易迷惑
+                                                filter.category = HomeFilterState.ALL
+                                            }
+                                            spaceMenuOpen = false
+                                        },
+                                    )
+                                }
+                                androidx.compose.material3.HorizontalDivider()
+                                // 未分配：物品可以不属于任何空间
+                                DropdownMenuItem(
+                                    text = { Text(Spaces.UNASSIGNED_LABEL) },
+                                    leadingIcon = {
+                                        Box(
+                                            Modifier.size(10.dp).background(
+                                                hexColor(store.spaceColorOf("")),
+                                                RoundedCornerShape(5.dp),
+                                            )
+                                        )
+                                    },
+                                    trailingIcon = { CountBadge(store.itemCountInSpace("")) },
+                                    onClick = {
+                                        if (filter.space.isNotEmpty()) {
+                                            filter.space = ""
+                                            filter.category = HomeFilterState.ALL
+                                        }
+                                        spaceMenuOpen = false
+                                    },
+                                )
+                                androidx.compose.material3.HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text("按空间分享…") },
+                                    onClick = {
+                                        spaceMenuOpen = false
+                                        shareSpaceDialog = true
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("管理空间…") },
+                                    onClick = {
+                                        spaceMenuOpen = false
+                                        onSpaces()
+                                    },
+                                )
+                            }
                         }
                         IconButton(onClick = onSettings) {
                             Icon(Icons.Filled.Settings, contentDescription = "设置")
@@ -618,6 +801,7 @@ fun HomeScreen(
                                 store = store,
                                 selectMode = selectMode,
                                 selected = item.id in selected,
+                                showSpace = filter.space == Spaces.ALL,
                                 onClick = {
                                     if (selectMode) {
                                         selected =
@@ -658,6 +842,89 @@ fun HomeScreen(
             dismissButton = {
                 TextButton(onClick = { pendingDelete = null }) { Text("取消") }
             },
+        )
+    }
+
+    // 多选：批量切换空间
+    if (batchSpaceDialog) {
+        BatchSpaceDialog(
+            count = selected.size,
+            onPick = { spaceId ->
+                batchSpaceDialog = false
+                val ids = selected.toList()
+                scope.launch {
+                    val moved = store.moveItemsToSpace(context, ids, spaceId)
+                    selectMode = false
+                    selected = emptySet()
+                    Toast.makeText(
+                        context,
+                        "已把 $moved 件移到「${store.spaceLabelOf(spaceId)}」",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            },
+            onDismiss = { batchSpaceDialog = false },
+        )
+    }
+
+    // 多选：批量切换分类
+    if (batchCategoryDialog) {
+        BatchCategoryDialog(
+            count = selected.size,
+            onPick = { categoryId ->
+                batchCategoryDialog = false
+                val ids = selected.toList()
+                scope.launch {
+                    val changed = store.setItemsCategory(context, ids, categoryId)
+                    selectMode = false
+                    selected = emptySet()
+                    Toast.makeText(
+                        context,
+                        "已把 $changed 件改为「${store.categoryLabelOf(categoryId)}」",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            },
+            onDismiss = { batchCategoryDialog = false },
+        )
+    }
+
+    // 多选：批量删除，先确认一次
+    if (batchDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { batchDeleteDialog = false },
+            title = { Text("删除 ${selected.size} 件物品") },
+            text = { Text("相关图片也会一并删除，此操作不可撤销。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    batchDeleteDialog = false
+                    val ids = selected.toList()
+                    scope.launch {
+                        store.removeItems(context, ids)
+                        selectMode = false
+                        selected = emptySet()
+                    }
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { batchDeleteDialog = false }) { Text("取消") }
+            },
+        )
+    }
+
+    // 按空间分享：把一个空间下的物品整体发到对方设备
+    if (shareSpaceDialog) {
+        ShareSpaceDialog(
+            onPick = { spaceId ->
+                shareSpaceDialog = false
+                val ids = store.itemsInSpace(spaceId).map { it.id }
+                if (ids.isEmpty()) {
+                    Toast.makeText(context, "该空间下没有可分享的物品", Toast.LENGTH_SHORT).show()
+                } else {
+                    onShare(ids)
+                }
+            },
+            onDismiss = { shareSpaceDialog = false },
         )
     }
 
@@ -865,6 +1132,8 @@ private fun ItemRow(
     store: ExpiryStore,
     selectMode: Boolean,
     selected: Boolean,
+    /** 「全部空间」筛选下显示归属空间，否则列表里分不清哪件属于哪个空间。 */
+    showSpace: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onSwipeDelete: () -> Unit,
@@ -886,15 +1155,20 @@ private fun ItemRow(
     SwipeToDismissBox(
         state = dismissState,
         enableDismissFromStartToEnd = false,
+        // 多选态下整行都是「点选」区域，禁止左滑，避免露出删除红底
+        enableDismissFromEndToStart = !selectMode,
         backgroundContent = {
-            Box(
-                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.error, RoundedCornerShape(12.dp)),
-                contentAlignment = Alignment.CenterEnd,
-            ) {
-                Icon(
-                    Icons.Filled.Delete, contentDescription = "删除",
-                    tint = Color.White, modifier = Modifier.padding(end = 20.dp),
-                )
+            // 多选态不画删除底色：卡片选中色是半透明的，红底会透上来变成一片红
+            if (!selectMode) {
+                Box(
+                    Modifier.fillMaxSize().background(MaterialTheme.colorScheme.error, RoundedCornerShape(12.dp)),
+                    contentAlignment = Alignment.CenterEnd,
+                ) {
+                    Icon(
+                        Icons.Filled.Delete, contentDescription = "删除",
+                        tint = Color.White, modifier = Modifier.padding(end = 20.dp),
+                    )
+                }
             }
         },
     ) {
@@ -904,8 +1178,16 @@ private fun ItemRow(
                 .fillMaxWidth()
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick),
             colors = CardDefaults.cardColors(
-                containerColor = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                else MaterialTheme.colorScheme.surface,
+                // 选中色要和底色混成不透明色，否则会透出后面的内容
+                containerColor = if (selected) {
+                    androidx.compose.ui.graphics.lerp(
+                        MaterialTheme.colorScheme.surface,
+                        MaterialTheme.colorScheme.primary,
+                        0.14f,
+                    )
+                } else {
+                    MaterialTheme.colorScheme.surface
+                },
             ),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             border = if (selected) null else androidx.compose.foundation.BorderStroke(
@@ -954,6 +1236,7 @@ private fun ItemRow(
                         Spacer(Modifier.height(3.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             val meta = buildList {
+                                if (showSpace) add(store.spaceLabelOf(item.spaceId))
                                 add(store.categoryLabelOf(item.category))
                                 if (item.expireAt.isNotEmpty()) add(item.expireAt)
                                 if (item.quantity > 1) add("×${item.quantity}")
@@ -1025,6 +1308,202 @@ private fun ItemRow(
                     }
                 }
             }
+        }
+    }
+}
+
+/** 多选态底部批量操作条：空间 / 分类 / 分享 / 删除。 */
+@Composable
+private fun SelectionActionBar(
+    canAct: Boolean,
+    onSpace: () -> Unit,
+    onCategory: () -> Unit,
+    onShare: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 8.dp) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SelectionAction("空间", canAct, onSpace)
+            SelectionAction("分类", canAct, onCategory)
+            SelectionAction("分享", canAct, onShare)
+            SelectionAction("删除", canAct, onDelete, danger = true)
+        }
+    }
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.RowScope.SelectionAction(
+    text: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    danger: Boolean = false,
+) {
+    TextButton(onClick = onClick, enabled = enabled, modifier = Modifier.weight(1f)) {
+        Text(
+            text,
+            color = when {
+                !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                danger -> MaterialTheme.colorScheme.error
+                else -> MaterialTheme.colorScheme.primary
+            },
+        )
+    }
+}
+
+/**
+ * 多选批量改空间。
+ * 列表只给「已有空间 + 未分配」，与单据的空间语义一致；要新建空间去「管理空间」。
+ */
+@Composable
+private fun BatchSpaceDialog(count: Int, onPick: (String) -> Unit, onDismiss: () -> Unit) {
+    val store = ExpiryStore.get()
+    val state by store.state.collectAsStateWithLifecycle()
+    val options = remember(state) { store.spaceOptions() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("移动 $count 件到") },
+        text = {
+            Column(
+                Modifier
+                    .heightIn(max = 320.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                for (space in options) {
+                    PickRow(space.label, space.color) { onPick(space.id) }
+                }
+                PickRow(
+                    Spaces.UNASSIGNED_LABEL,
+                    Spaces.UNASSIGNED_COLOR,
+                ) { onPick("") }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
+}
+
+/** 多选批量改分类。 */
+@Composable
+private fun BatchCategoryDialog(count: Int, onPick: (String) -> Unit, onDismiss: () -> Unit) {
+    val store = ExpiryStore.get()
+    val state by store.state.collectAsStateWithLifecycle()
+    val options = remember(state) { store.categoryOptions() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("改为分类（$count 件）") },
+        text = {
+            Column(
+                Modifier
+                    .heightIn(max = 320.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                for (option in options) {
+                    PickRow(option.label, option.color) { onPick(option.id) }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
+}
+
+/** 按空间分享：选空间 → 把该空间的物品整体带给传输页。 */
+@Composable
+private fun ShareSpaceDialog(onPick: (String) -> Unit, onDismiss: () -> Unit) {
+    val store = ExpiryStore.get()
+    val state by store.state.collectAsStateWithLifecycle()
+    val options = remember(state) { store.spaceOptions() }
+    // 只算未归档的：与「发送」实际带走的条数一致
+    val total = store.itemsInSpace(Spaces.ALL).size
+    val unassigned = store.itemsInSpace("").size
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("按空间分享") },
+        text = {
+            Column(
+                Modifier
+                    .heightIn(max = 340.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Text(
+                    "选一个空间，把它下面的物品整体发到对方设备",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                if (total == 0) {
+                    Text(
+                        "还没有任何物品可以分享",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                for (space in options) {
+                    val count = store.itemsInSpace(space.id).size
+                    if (count > 0) {
+                        PickRow(space.label, space.color, trailing = "$count 件") { onPick(space.id) }
+                    }
+                }
+                if (unassigned > 0) {
+                    PickRow(
+                        Spaces.UNASSIGNED_LABEL,
+                        Spaces.UNASSIGNED_COLOR,
+                        trailing = "$unassigned 件",
+                    ) { onPick("") }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
+}
+
+/** 弹窗里的可点选行：颜色点 + 名称 + 可选右侧计数。 */
+@Composable
+private fun PickRow(
+    label: String,
+    color: String,
+    trailing: String? = null,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(10.dp).background(hexColor(color), RoundedCornerShape(5.dp)))
+        Spacer(Modifier.width(10.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (trailing != null) {
+            Text(
+                trailing,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

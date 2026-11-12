@@ -11,6 +11,9 @@ import org.json.JSONObject
 /** 分类改名的失败原因；成功时返回 null。 */
 enum class CategoryNameError { empty, duplicate }
 
+/** 空间改名的失败原因；成功时返回 null。 */
+enum class SpaceNameError { empty, duplicate }
+
 /**
  * 到期提醒数据仓库。
  * 单例 + Mutex 串行化落盘，UI 通过 [items] / [categories] StateFlow 订阅。
@@ -26,6 +29,12 @@ class ExpiryStore private constructor() {
         val categoryLabels: Map<String, String> = emptyMap(),
         /** 分类展示顺序（只存 id），用户在分类管理里拖动排序后写入。 */
         val order: List<String> = emptyList(),
+        /** 自定义空间（不含内置的默认空间）。 */
+        val spaces: List<SpaceInfo> = emptyList(),
+        /** 内置空间的改名覆盖。 */
+        val spaceLabels: Map<String, String> = emptyMap(),
+        /** 内置空间 /「未分配」/「全部空间」的颜色覆盖。 */
+        val spaceColors: Map<String, String> = emptyMap(),
     )
 
     private val _state = MutableStateFlow(State())
@@ -108,6 +117,59 @@ class ExpiryStore private constructor() {
     fun categoryLabelOf(id: String): String = categoryOf(id)?.label ?: id
 
     fun categoryColorOf(id: String): String = categoryOf(id)?.color ?: "#909399"
+
+    // ---------------------------------------------------------------- 空间
+
+    /** 内置默认空间 + 自定义空间（内置在前，自定义按创建先后）。 */
+    fun spaceOptions(): List<SpaceDef> {
+        val labels = _state.value.spaceLabels
+        val colors = _state.value.spaceColors
+        val builtin = Spaces.BUILTIN.map { def ->
+            SpaceDef(def.id, labels[def.id] ?: def.label, colors[def.id] ?: def.color)
+        }
+        return builtin + _state.value.spaces.map { SpaceDef(it.id, it.label, it.color) }
+    }
+
+    fun isBuiltinSpace(id: String): Boolean = Spaces.BUILTIN.any { it.id == id }
+
+    /** 未分配空间（空串）：物品可以不属于任何空间。 */
+    fun isUnassignedSpace(id: String?): Boolean = id.isNullOrEmpty()
+
+    fun spaceOf(id: String): SpaceDef? = spaceOptions().firstOrNull { it.id == id }
+
+    /**
+     * 规整空间 id：空串保留（未分配是合法状态），指向不存在的空间则回落到默认空间，
+     * 避免脏 id 把物品藏起来。
+     */
+    fun resolveSpaceId(id: String?): String = when {
+        id.isNullOrEmpty() -> ""
+        spaceOf(id) != null -> id
+        else -> Spaces.DEFAULT
+    }
+
+    fun spaceLabelOf(id: String): String = when {
+        id == Spaces.ALL -> Spaces.ALL_LABEL
+        isUnassignedSpace(id) -> Spaces.UNASSIGNED_LABEL
+        else -> spaceOf(id)?.label ?: Spaces.BUILTIN.first().label
+    }
+
+    fun spaceColorOf(id: String): String {
+        val overrides = _state.value.spaceColors
+        return when {
+            id == Spaces.ALL -> overrides[Spaces.ALL] ?: Spaces.ALL_COLOR
+            isUnassignedSpace(id) -> overrides[Spaces.UNASSIGNED_KEY] ?: Spaces.UNASSIGNED_COLOR
+            else -> overrides[id] ?: spaceOf(id)?.color ?: "#409EFF"
+        }
+    }
+
+    /** 该空间下未归档的物品（按到期日升序），首页列表用；[Spaces.ALL] = 所有空间 + 未分配。 */
+    fun itemsInSpace(spaceId: String): List<ExpiryItem> = when (spaceId) {
+        Spaces.ALL -> activeItems()
+        else -> items.filter { !it.archived && it.spaceId == spaceId }.sortedBy { it.expireAt }
+    }
+
+    fun itemCountInSpace(spaceId: String): Int =
+        if (spaceId == Spaces.ALL) items.size else items.count { it.spaceId == spaceId }
 
     // ---------------------------------------------------------------- 物品
 
@@ -216,6 +278,37 @@ class ExpiryStore private constructor() {
                 }
             }
 
+            // 空间：自定义项（id 不能与内置默认空间撞车，重复 id 只留第一条）
+            val spaces = LinkedHashMap<String, SpaceInfo>()
+            stored?.optJSONArray("spaces")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val space = SpaceInfo.fromJson(arr.opt(i)) ?: continue
+                    spaces.putIfAbsent(space.id, space)
+                }
+            }
+
+            // 内置空间的改名覆盖：只留内置 id + 非空名称
+            val spaceLabels = LinkedHashMap<String, String>()
+            stored?.optJSONObject("spaceLabels")?.let { labelsJson ->
+                for (key in labelsJson.keys()) {
+                    val value = labelsJson.optStringOrNull(key)?.trim()
+                    if (isBuiltinSpace(key) && !value.isNullOrEmpty()) {
+                        spaceLabels[key] = value
+                    }
+                }
+            }
+
+            // 内置空间 / 未分配 / 全部空间的颜色覆盖：只留已知 id 与合法色值
+            val spaceColors = LinkedHashMap<String, String>()
+            stored?.optJSONObject("spaceColors")?.let { colorJson ->
+                for (key in colorJson.keys()) {
+                    val value = colorJson.optStringOrNull(key)
+                    val known = isBuiltinSpace(key) ||
+                        key == Spaces.ALL || key == Spaces.UNASSIGNED_KEY
+                    if (known && value != null && isHexColor(value)) spaceColors[key] = value
+                }
+            }
+
             _state.value = State(
                 loaded = true,
                 items = migratedItems,
@@ -223,7 +316,23 @@ class ExpiryStore private constructor() {
                 categoryColors = colors,
                 categoryLabels = labels,
                 order = order.toList(),
+                spaces = spaces.values.toList(),
+                spaceLabels = spaceLabels,
+                spaceColors = spaceColors,
             )
+
+            // v6 迁移：物品的 spaceId 指向不存在的空间（旧数据/被删空间/他人数据）时归到默认空间；
+            // 空串是「未分配」，属于合法状态，原样保留
+            val knownSpaces = spaceOptions().map { it.id }.toSet()
+            val spaceFixed = _state.value.items.map { item ->
+                if (item.spaceId.isEmpty() || item.spaceId in knownSpaces) item
+                else item.copy(spaceId = Spaces.DEFAULT)
+            }
+            if (spaceFixed != _state.value.items) {
+                _state.value = _state.value.copy(items = spaceFixed)
+                migrated = true
+            }
+
             if (migrated) persistLocked(context)
         }
     }
@@ -242,6 +351,9 @@ class ExpiryStore private constructor() {
             categoryColors = _state.value.categoryColors,
             categoryLabels = _state.value.categoryLabels,
             categoryOrder = categoryOptions().map { it.id },
+            spaces = _state.value.spaces,
+            spaceLabels = _state.value.spaceLabels,
+            spaceColors = _state.value.spaceColors,
         )
         file.writeText(payload.toJson().toString(2))
     }
@@ -287,6 +399,38 @@ class ExpiryStore private constructor() {
         }
     }
 
+    /**
+     * 整体替换已有物品（跨设备「覆盖同名」用）：保留 id 与创建时间，其余字段全用 [patch]，
+     * 并删除被替换掉的旧图片文件。物品不存在时原样新增。
+     */
+    suspend fun replaceItem(context: Context, id: String, patch: ExpiryItem) {
+        var stalePaths: List<String> = emptyList()
+        var missing = false
+        mutex.withLock {
+            val list = _state.value.items.toMutableList()
+            val index = list.indexOfFirst { it.id == id }
+            if (index < 0) {
+                missing = true
+                return@withLock
+            }
+            val current = list[index]
+            val keep = patch.images.map { it.path }.toSet()
+            stalePaths = current.images.map { it.path }.filterNot { it in keep }
+            list[index] = patch.copy(
+                id = id,
+                createdAt = current.createdAt,
+                updatedAt = Dates.nowIsoTimestamp(),
+            )
+            _state.value = _state.value.copy(items = list)
+            persistLocked(context)
+        }
+        if (missing) {
+            createItem(context, patch)
+            return
+        }
+        if (stalePaths.isNotEmpty()) ImageStore.removeImages(context, stalePaths)
+    }
+
     suspend fun removeItem(context: Context, id: String) {
         var removed: ExpiryItem? = null
         mutex.withLock {
@@ -313,6 +457,58 @@ class ExpiryStore private constructor() {
         return removedItems.size
     }
 
+    /**
+     * 批量改归属空间：多选态下整体切换空间用。
+     * [toSpaceId] 为空串表示移到「未分配」；返回真正发生变化的条数。
+     */
+    suspend fun moveItemsToSpace(context: Context, ids: Collection<String>, toSpaceId: String): Int {
+        if (ids.isEmpty()) return 0
+        val target = resolveSpaceId(toSpaceId)
+        val pick = ids.toSet()
+        var moved = 0
+        mutex.withLock {
+            val now = Dates.nowIsoTimestamp()
+            val list = _state.value.items.map { item ->
+                if (item.id !in pick || item.spaceId == target) item
+                else {
+                    moved += 1
+                    item.copy(spaceId = target, updatedAt = now)
+                }
+            }
+            if (moved > 0) {
+                _state.value = _state.value.copy(items = list)
+                persistLocked(context)
+            }
+        }
+        return moved
+    }
+
+    /**
+     * 批量改分类：多选态下整体切换分类用。
+     * 分类不存在（被删/脏 id）时降级到默认分类，避免物品在分类筛选里消失。
+     */
+    suspend fun setItemsCategory(context: Context, ids: Collection<String>, categoryId: String): Int {
+        if (ids.isEmpty()) return 0
+        val target = categoryId.takeIf { categoryOf(it) != null } ?: Categories.DEFAULT
+        val pick = ids.toSet()
+        var changed = 0
+        mutex.withLock {
+            val now = Dates.nowIsoTimestamp()
+            val list = _state.value.items.map { item ->
+                if (item.id !in pick || item.category == target) item
+                else {
+                    changed += 1
+                    item.copy(category = target, updatedAt = now)
+                }
+            }
+            if (changed > 0) {
+                _state.value = _state.value.copy(items = list)
+                persistLocked(context)
+            }
+        }
+        return changed
+    }
+
     suspend fun clearItems(context: Context) {
         val paths = items.flatMap { it.images.map { img -> img.path } }
         mutex.withLock {
@@ -320,6 +516,19 @@ class ExpiryStore private constructor() {
             persistLocked(context)
         }
         ImageStore.removeImages(context, paths)
+    }
+
+    /**
+     * 批量入库：跨设备接收时用。
+     * id 与图片路径由调用方重写好（避免与本地数据撞车），这里只负责追加 + 落盘。
+     */
+    suspend fun addItems(context: Context, additions: List<ExpiryItem>): Int {
+        if (additions.isEmpty()) return 0
+        mutex.withLock {
+            _state.value = _state.value.copy(items = _state.value.items + additions)
+            persistLocked(context)
+        }
+        return additions.size
     }
 
     // ------------------------------------------------------------ categories
@@ -454,8 +663,108 @@ class ExpiryStore private constructor() {
         }
     }
 
-    // ------------------------------------------------------------- reminders
+    // ------------------------------------------------------------ spaces
 
+    /** 新增自定义空间；空名/重名返回 null。 */
+    suspend fun addSpace(context: Context, label: String): SpaceInfo? {
+        val name = label.trim()
+        if (name.isEmpty()) return null
+        if (spaceOptions().hasSpaceNameConflict(name)) return null
+        val used = spaceOptions().map { it.color }.toSet()
+        val color = Spaces.CUSTOM_COLORS.firstOrNull { it !in used }
+            ?: Spaces.CUSTOM_COLORS[_state.value.spaces.size % Spaces.CUSTOM_COLORS.size]
+        val space = SpaceInfo(
+            id = "sp_${uid()}",
+            label = name,
+            color = color,
+            createdAt = Dates.nowIsoTimestamp(),
+        )
+        mutex.withLock {
+            _state.value = _state.value.copy(spaces = _state.value.spaces + space)
+            persistLocked(context)
+        }
+        return space
+    }
+
+    /** 内置空间的默认名称（改名后可恢复）。 */
+    fun defaultSpaceLabel(id: String): String? =
+        Spaces.BUILTIN.firstOrNull { it.id == id }?.label
+
+    /** 空间改名：自定义空间改自身，内置空间记进覆盖表。 */
+    suspend fun renameSpace(context: Context, id: String, label: String): SpaceNameError? {
+        val name = label.trim()
+        if (name.isEmpty()) return SpaceNameError.empty
+        mutex.withLock {
+            val current = _state.value
+            if (spaceOptions().hasSpaceNameConflict(name, exceptId = id)) {
+                return SpaceNameError.duplicate
+            }
+            val index = current.spaces.indexOfFirst { it.id == id }
+            if (index >= 0) {
+                val old = current.spaces[index]
+                if (old.label == name) return null
+                _state.value = current.copy(
+                    spaces = current.spaces.toMutableList().also { it[index] = old.copy(label = name) },
+                )
+            } else if (isBuiltinSpace(id)) {
+                val default = defaultSpaceLabel(id)
+                val next = if (name == default) current.spaceLabels - id
+                else current.spaceLabels + (id to name)
+                if (next == current.spaceLabels) return null
+                _state.value = current.copy(spaceLabels = next)
+            } else return null
+            persistLocked(context)
+        }
+        return null
+    }
+
+    /**
+     * 换色：自定义空间改自身颜色；内置空间、「未分配」、「全部空间」记进颜色覆盖表。
+     * [id] 传空串表示「未分配」。
+     */
+    suspend fun setSpaceColor(context: Context, id: String, color: String) {
+        if (!isHexColor(color)) return
+        val key = Spaces.colorKeyOf(id)
+        mutex.withLock {
+            val current = _state.value
+            val index = current.spaces.indexOfFirst { it.id == id }
+            if (index >= 0) {
+                val old = current.spaces[index]
+                if (old.color == color) return
+                _state.value = current.copy(
+                    spaces = current.spaces.toMutableList().also { it[index] = old.copy(color = color) },
+                )
+                persistLocked(context)
+                return
+            }
+            val overrideable = key == Spaces.ALL || key == Spaces.UNASSIGNED_KEY || isBuiltinSpace(id)
+            if (!overrideable) return
+            if (current.spaceColors[key] == color) return
+            _state.value = current.copy(spaceColors = current.spaceColors + (key to color))
+            persistLocked(context)
+        }
+    }
+
+    /**
+     * 删除空间：内置默认空间、或空间下还有物品（含已归档）时拒绝，返回 false。
+     * 物品不会因为删空间被连带删除——必须先转移或删除，避免误伤数据。
+     */
+    suspend fun removeSpace(context: Context, id: String): Boolean {
+        if (isBuiltinSpace(id)) return false
+        var ok = false
+        mutex.withLock {
+            if (_state.value.items.any { it.spaceId == id }) return false
+            val list = _state.value.spaces.filter { it.id != id }
+            ok = list.size != _state.value.spaces.size
+            if (ok) {
+                _state.value = _state.value.copy(spaces = list)
+                persistLocked(context)
+            }
+        }
+        return ok
+    }
+
+    // ------------------------------------------------------------- reminders
     /** 提醒去重标记：同一天同一档位只提醒一次。 */
     fun reminderKey(item: ExpiryItem, days: Int, date: String): String = "$date:${item.id}:$days"
 

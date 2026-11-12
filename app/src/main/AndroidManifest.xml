@@ -3,12 +3,13 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!--
-      ML Kit 的 bundled OCR 会把 INTERNET / ACCESS_NETWORK_STATE 合并进来，
-      但离线识别根本不需要网络。这里显式移除，保证「零联网、零上传」是可验证的事实，
-      而不是宣传话术——装完之后系统权限列表里看不到任何网络权限。
+      ML Kit 的 bundled OCR 会把 INTERNET / ACCESS_NETWORK_STATE 合并进来。
+      离线识别本身不联网，但「跨设备分享」要在同一 Wi-Fi 下直连对端设备，
+      所以这两个权限不再移除——代码里没有任何访问互联网的请求：
+      传输只走局域网 Socket（TCP），设备发现只走 mDNS（NsdManager）。
     -->
-    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />

@@ -147,6 +147,10 @@ fun EditScreen(
     var productionDate by remember {
         mutableStateOf(existing?.productionDate ?: prefill?.productionDate ?: "")
     }
+    // 归属空间：编辑已有物品用它的空间；新增默认「不归属空间」（空间默认为空）
+    var spaceId by remember {
+        mutableStateOf(existing?.let { store.resolveSpaceId(it.spaceId) } ?: "")
+    }
     var shelfLifeText by remember {
         mutableStateOf(
             existing?.shelfLife?.takeIf { it > 0 }?.toString()
@@ -282,6 +286,7 @@ fun EditScreen(
     // 分类/单位下拉
     var categoryMenu by remember { mutableStateOf(false) }
     var unitMenu by remember { mutableStateOf(false) }
+    var spaceMenu by remember { mutableStateOf(false) }
 
     // 图片：拖动排序 / 重新识别（都由按钮触发）
     var sortDialog by remember { mutableStateOf(false) }
@@ -450,6 +455,61 @@ fun EditScreen(
                                     nameFromOcr = false
                                 },
                             )
+                        }
+
+                        // -------------------------------------- 归属空间
+                        FieldLabel("空间")
+                        Box {
+                            SelectBox(
+                                text = store.spaceLabelOf(spaceId),
+                                leading = {
+                                    Box(
+                                        Modifier
+                                            .size(10.dp)
+                                            .background(hexColor(store.spaceColorOf(spaceId)), CircleShape),
+                                    )
+                                },
+                                onClick = { spaceMenu = true },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            DropdownMenu(
+                                expanded = spaceMenu,
+                                onDismissRequest = { spaceMenu = false },
+                                shape = RoundedCornerShape(12.dp),
+                            ) {
+                                // 空间可以为空：不选任何空间时归入「未分配」
+                                DropdownMenuItem(
+                                    text = { Text("不归属空间") },
+                                    leadingIcon = {
+                                        Box(
+                                            Modifier.size(10.dp).background(
+                                                hexColor(com.jimmy.expiryreminder.core.Spaces.UNASSIGNED_COLOR),
+                                                CircleShape,
+                                            )
+                                        )
+                                    },
+                                    onClick = {
+                                        spaceId = ""
+                                        spaceMenu = false
+                                    },
+                                )
+                                for (space in store.spaceOptions()) {
+                                    DropdownMenuItem(
+                                        text = { Text(space.label) },
+                                        leadingIcon = {
+                                            Box(
+                                                Modifier.size(10.dp).background(
+                                                    hexColor(space.color), CircleShape,
+                                                )
+                                            )
+                                        },
+                                        onClick = {
+                                            spaceId = space.id
+                                            spaceMenu = false
+                                        },
+                                    )
+                                }
+                            }
                         }
 
                         // -------------------------------------- 分类 + 数量
@@ -888,6 +948,7 @@ fun EditScreen(
                         archived = existing?.archived ?: false,
                         createdAt = existing?.createdAt ?: Dates.nowIsoTimestamp(),
                         updatedAt = Dates.nowIsoTimestamp(),
+                        spaceId = store.resolveSpaceId(spaceId),
                     )
                     scope.launch {
                         if (existing == null) store.createItem(context, draft)

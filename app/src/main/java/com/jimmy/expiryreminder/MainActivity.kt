@@ -31,6 +31,8 @@ import com.jimmy.expiryreminder.ui.HomeScreen
 import com.jimmy.expiryreminder.ui.OcrProgressScreen
 import com.jimmy.expiryreminder.ui.PickImagesScreen
 import com.jimmy.expiryreminder.ui.SettingsScreen
+import com.jimmy.expiryreminder.ui.SpaceScreen
+import com.jimmy.expiryreminder.ui.TransferScreen
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -108,13 +110,20 @@ class MainActivity : ComponentActivity() {
                     when (val s = screen) {
                         is Screen.Home -> HomeScreen(
                             filter = homeFilter,
-                            onAdd = { defaultCategory -> screen = Screen.Edit(null, defaultCategory) },
+                            onAdd = { defaultCategory ->
+                                screen = Screen.Edit(
+                                    itemId = null,
+                                    defaultCategory = defaultCategory,
+                                )
+                            },
                             onOcr = { defaultCategory ->
-                                screen = Screen.PickImages(defaultCategory)
+                                screen = Screen.PickImages(defaultCategory = defaultCategory)
                             },
                             onEdit = { id -> screen = Screen.Edit(id) },
                             onSettings = { screen = Screen.Settings },
                             onCategories = { screen = Screen.Categories },
+                            onSpaces = { screen = Screen.Spaces },
+                            onShare = { ids -> screen = Screen.Transfer(ids) },
                         )
                         is Screen.PickImages -> PickImagesScreen(
                             onBack = { screen = Screen.Home },
@@ -129,7 +138,10 @@ class MainActivity : ComponentActivity() {
                             uris = s.uris.mapNotNull { runCatching { Uri.parse(it) }.getOrNull() },
                             onCancel = {
                                 // 回选图页，把已选照片带回去，不白拍
-                                screen = Screen.PickImages(s.defaultCategory, s.uris)
+                                screen = Screen.PickImages(
+                                    defaultCategory = s.defaultCategory,
+                                    initialUris = s.uris,
+                                )
                             },
                             onFinish = { draft ->
                                 screen = Screen.Edit(
@@ -147,8 +159,16 @@ class MainActivity : ComponentActivity() {
                         )
                         is Screen.Settings -> SettingsScreen(
                             onBack = { screen = Screen.Home },
+                            onTransfer = { screen = Screen.Transfer(emptyList()) },
                         )
                         is Screen.Categories -> CategoryScreen(
+                            onBack = { screen = Screen.Home },
+                        )
+                        is Screen.Spaces -> SpaceScreen(
+                            onBack = { screen = Screen.Home },
+                        )
+                        is Screen.Transfer -> TransferScreen(
+                            itemIds = s.itemIds,
                             onBack = { screen = Screen.Home },
                         )
                     }
@@ -161,7 +181,7 @@ class MainActivity : ComponentActivity() {
 sealed interface Screen {
     data object Home : Screen
 
-    /** [defaultCategory] 只在新增（[itemId] 为 null）时生效，来自主页当前的筛选分类。 */
+    /** [defaultCategory] 只在新增（[itemId] 为 null）时生效，来自主页当前的筛选。 */
     data class Edit(
         val itemId: String?,
         val defaultCategory: String? = null,
@@ -172,6 +192,12 @@ sealed interface Screen {
 
     /** 分类管理（独立页面，不再是弹窗）。 */
     data object Categories : Screen
+
+    /** 空间管理（独立页面）。 */
+    data object Spaces : Screen
+
+    /** 跨设备传输：从首页多选「分享」进来时带 [itemIds]，从设置进来时为空。 */
+    data class Transfer(val itemIds: List<String> = emptyList()) : Screen
 
     /** 选图页。[initialUris] 用于从识别进度页返回时带回已选照片。 */
     data class PickImages(
@@ -200,6 +226,11 @@ private val ScreenSaver = mapSaver(
             )
             is Screen.Settings -> mapOf("name" to "settings")
             is Screen.Categories -> mapOf("name" to "categories")
+            is Screen.Spaces -> mapOf("name" to "spaces")
+            is Screen.Transfer -> mapOf(
+                "name" to "transfer",
+                "ids" to ArrayList(screen.itemIds),
+            )
             is Screen.PickImages -> mapOf(
                 "name" to "pick",
                 "category" to (screen.defaultCategory ?: ""),
@@ -217,6 +248,10 @@ private val ScreenSaver = mapSaver(
         when (map["name"]) {
             "settings" -> Screen.Settings
             "categories" -> Screen.Categories
+            "spaces" -> Screen.Spaces
+            "transfer" -> Screen.Transfer(
+                (map["ids"] as? List<*>)?.mapNotNull { it as? String }.orEmpty(),
+            )
             "edit" -> Screen.Edit(
                 itemId = (map["itemId"] as? String)?.takeIf { it.isNotEmpty() },
                 defaultCategory = (map["category"] as? String)?.takeIf { it.isNotEmpty() },

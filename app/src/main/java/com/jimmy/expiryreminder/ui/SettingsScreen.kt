@@ -61,10 +61,10 @@ import com.jimmy.expiryreminder.notify.ReminderService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-/** 设置页：主题、通知、备份导出导入、清空数据。 */
+/** 设置页：主题、通知、备份导出导入、跨设备传输、清空数据。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
     val context = LocalContext.current
     val activity = context as? Activity
     val store = ExpiryStore.get()
@@ -242,6 +242,17 @@ fun SettingsScreen(onBack: () -> Unit) {
                     }
                 }
             }
+
+            HorizontalDivider()
+            SectionTitle("跨设备")
+
+            ListItem(
+                headlineContent = { Text("跨设备分享") },
+                supportingContent = { Text("同一 Wi-Fi 下与另一台设备配对，双向传输物品记录") },
+                trailingContent = {
+                    OutlinedButton(onClick = onTransfer) { Text("打开") }
+                },
+            )
 
             HorizontalDivider()
             SectionTitle("备份")
