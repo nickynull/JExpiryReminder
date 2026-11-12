@@ -38,7 +38,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -63,7 +62,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
@@ -186,26 +184,39 @@ fun CategoryScreen(onBack: () -> Unit) {
 
             // 新增区钉在底部，键盘弹出时跟着抬起
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                Row(
+                Column(
                     Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    OutlinedTextField(
-                        value = newLabel,
-                        onValueChange = { newLabel = it; newError = null },
-                        label = { Text("新增分类") },
-                        singleLine = true,
-                        isError = newError != null,
-                        supportingText = newError?.let { msg ->
-                            { Text(msg, color = MaterialTheme.colorScheme.error) }
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Button(onClick = ::submitNew, enabled = newLabel.isNotBlank()) {
-                        Text("添加")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // 与首页搜索、编辑页字段同款：48dp 高、10dp 圆角，带一键清空
+                        InputBox(
+                            value = newLabel,
+                            onValueChange = { newLabel = it; newError = null },
+                            placeholder = "新增分类名称",
+                            fixedHeight = 48.dp,
+                            showClear = true,
+                            isError = newError != null,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Button(
+                            onClick = ::submitNew,
+                            enabled = newLabel.isNotBlank(),
+                            modifier = Modifier.height(48.dp),
+                        ) {
+                            Text("添加")
+                        }
+                    }
+                    // 错误文案放到框外，输入框本身不被撑高、两行内容也不会一起跳
+                    newError?.let { msg ->
+                        Text(
+                            msg,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(start = 12.dp, top = 4.dp),
+                        )
                     }
                 }
             }
@@ -267,19 +278,25 @@ fun CategoryScreen(onBack: () -> Unit) {
             title = { Text("分类改名") },
             text = {
                 Column {
-                    OutlinedTextField(
+                    // 用 TextFieldValue 版：进来就全选原名，直接输入即替换；右侧也能一键清空
+                    InputBox(
                         value = field,
                         onValueChange = { field = it; nameError = null },
-                        label = { Text("分类名称") },
-                        singleLine = true,
+                        placeholder = "分类名称",
+                        fixedHeight = 48.dp,
+                        showClear = true,
                         isError = nameError != null,
-                        supportingText = nameError?.let { msg ->
-                            { Text(msg, color = MaterialTheme.colorScheme.error) }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .focusRequester(focus),
+                        focusRequester = focus,
+                        modifier = Modifier.fillMaxWidth(),
                     )
+                    nameError?.let { msg ->
+                        Text(
+                            msg,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(start = 12.dp, top = 4.dp),
+                        )
+                    }
                     if (defaultLabel != null && renamed) {
                         TextButton(
                             onClick = {

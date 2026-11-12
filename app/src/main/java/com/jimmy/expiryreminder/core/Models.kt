@@ -151,10 +151,17 @@ val ShelfLifeUnit.label: String
 /** 单件物品最多几张图片。 */
 const val MAX_IMAGES = 6
 
-/** 提醒档位选项。 */
+/** 提醒档位选项。预设之外的天数由用户在编辑页「自定义」补进来。 */
 val REMIND_DAY_OPTIONS = listOf(60, 30, 15, 7, 3, 1, 0)
 
+/** 自定义提前天数的上限：超过一年的提前提醒没有实际意义。 */
+const val REMIND_DAY_MAX = 365
+
 fun remindDayLabel(day: Int): String = if (day == 0) "当天" else "$day 天前"
+
+/** 档位清洗：丢弃越界值（0..[REMIND_DAY_MAX]）、去重、按由远到近排。 */
+fun normalizeRemindDays(days: List<Int>): List<Int> =
+    days.filter { it in 0..REMIND_DAY_MAX }.distinct().sortedDescending()
 
 /**
  * 列表项用的提醒摘要：`提前 30/7/1 天`。

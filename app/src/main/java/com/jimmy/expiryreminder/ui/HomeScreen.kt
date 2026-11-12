@@ -35,7 +35,9 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -59,14 +61,10 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
@@ -275,59 +273,22 @@ fun HomeScreen(
         }
     }
 
+    // 新增/识别带上的分类：「全部分类」= 无筛选，交给新增页用默认分类；其余带上筛选的分类
+    val targetCategory = filter.category.takeIf {
+        it != HomeFilterState.ALL && store.categoryOf(it) != null
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        floatingActionButton = {
+        bottomBar = {
+            // 多选态下藏起搜索栏与新增/识别，底部完全让给列表，避免误触
             if (!selectMode) {
-                // 识别放在新增上方，尺寸更小、白底描边：次要入口不抢主动作的重心
-                Column(
-                    // 两个 FAB 尺寸不同，按中线对齐而不是右缘对齐，否则小按钮的轴心会偏
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    SmallFloatingActionButton(
-                        onClick = {
-                            onOcr(
-                                filter.category.takeIf {
-                                    it != HomeFilterState.ALL && store.categoryOf(it) != null
-                                }
-                            )
-                        },
-                        shape = CircleShape,
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        contentColor = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.border(
-                            1.dp, MaterialTheme.colorScheme.outline, CircleShape,
-                        ),
-                    ) {
-                        Box(
-                            Modifier
-                                .size(22.dp)
-                                .semantics { contentDescription = "图像识别" },
-                        ) {
-                            CameraGlyph(
-                                color = MaterialTheme.colorScheme.primary,
-                                holeColor = MaterialTheme.colorScheme.surface,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
-                    }
-                    FloatingActionButton(
-                        onClick = {
-                            // 「全部分类」= 无筛选，交给新增页用默认分类；其余带上筛选的分类
-                            onAdd(
-                                filter.category.takeIf {
-                                    it != HomeFilterState.ALL && store.categoryOf(it) != null
-                                }
-                            )
-                        },
-                        shape = CircleShape,
-                        containerColor = Color(0xFFFFC107),
-                        contentColor = Color(0xFF303133),
-                    ) {
-                        Icon(Icons.Filled.Add, contentDescription = "新增")
-                    }
-                }
+                HomeBottomBar(
+                    keyword = filter.keyword,
+                    onKeywordChange = { filter.keyword = it },
+                    onOcr = { onOcr(targetCategory) },
+                    onAdd = { onAdd(targetCategory) },
+                )
             }
         },
     ) { padding ->
@@ -423,30 +384,6 @@ fun HomeScreen(
                         modifier = Modifier.weight(1f),
                     )
                 }
-
-                // ------------------------------------------ 搜索框
-                OutlinedTextField(
-                    value = filter.keyword,
-                    onValueChange = { filter.keyword = it },
-                    placeholder = {
-                        Text("搜索物品名称或备注", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    },
-                    leadingIcon = {
-                        Icon(
-                            Icons.Filled.Search, contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                        focusedContainerColor = MaterialTheme.colorScheme.surface,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    ),
-                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                )
 
                 // ------------------------------------------ 分类切换器 + 分类/多选
                 Row(
@@ -604,7 +541,7 @@ fun HomeScreen(
                     Modifier
                         .fillMaxSize()
                         .categorySlide({ slide.value }, slideShiftPx)
-                        .padding(bottom = 96.dp),
+                        .padding(bottom = 24.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -631,7 +568,7 @@ fun HomeScreen(
                         if (state.loaded) {
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                "点右下角 + 添加第一件物品",
+                                "点底部 + 添加第一件物品",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -645,7 +582,7 @@ fun HomeScreen(
                         .categorySlide({ slide.value }, slideShiftPx),
                     state = listState,
                     contentPadding = PaddingValues(
-                        start = 16.dp, end = 16.dp, top = 6.dp, bottom = 96.dp,
+                        start = 16.dp, end = 16.dp, top = 6.dp, bottom = 12.dp,
                     ),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -737,6 +674,94 @@ private fun countOf(
     grouped: List<Pair<ExpiryStatus, List<ExpiryItem>>>,
     status: ExpiryStatus,
 ): Int = grouped.firstOrNull { it.first == status }?.second?.size ?: 0
+
+/**
+ * 底部常驻操作条：搜索 + 识别 + 新增排在同一行。
+ *
+ * 搜索框直接复用 [InputBox]（48dp 高、10dp 圆角、bodyMedium 字号），与编辑页的物品名称输入框
+ * 完全同一套尺寸；右侧带一键清空。键盘弹出时整条被顶到键盘上方，边输边看列表结果。
+ */
+@Composable
+private fun HomeBottomBar(
+    keyword: String,
+    onKeywordChange: (String) -> Unit,
+    onOcr: () -> Unit,
+    onAdd: () -> Unit,
+) {
+    Surface(color = MaterialTheme.colorScheme.background) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding(),
+        ) {
+            // 一条极淡的分隔线：列表滚到尽头时内容不会和搜索栏糊在一起
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
+            )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                InputBox(
+                    value = keyword,
+                    onValueChange = onKeywordChange,
+                    placeholder = "搜索名称或备注",
+                    fixedHeight = 48.dp,
+                    showClear = true,
+                    leading = {
+                        Icon(
+                            Icons.Filled.Search, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+                // 识别：白底描边的次要入口，与搜索框同高同圆
+                Surface(
+                    onClick = onOcr,
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface,
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp, MaterialTheme.colorScheme.outline,
+                    ),
+                    modifier = Modifier
+                        .size(48.dp)
+                        .semantics { contentDescription = "图像识别" },
+                ) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CameraGlyph(
+                            color = MaterialTheme.colorScheme.primary,
+                            holeColor = MaterialTheme.colorScheme.surface,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
+                }
+                // 新增：主入口，沿用原来的黄色圆钮
+                Surface(
+                    onClick = onAdd,
+                    shape = CircleShape,
+                    color = Color(0xFFFFC107),
+                    modifier = Modifier.size(48.dp),
+                ) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Filled.Add, contentDescription = "新增",
+                            tint = Color(0xFF303133), modifier = Modifier.size(24.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 /**
  * 切分类的进场效果：整块内容沿滑动方向滑入并淡入（progress 为 0 时完全归位）。

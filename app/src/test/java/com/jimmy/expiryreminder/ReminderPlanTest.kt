@@ -53,6 +53,16 @@ class ReminderPlanTest {
     }
 
     @Test
+    fun `自定义天数照常排程`() {
+        val now = LocalDateTime.of(2026, 11, 11, 10, 0)
+        val plan = ReminderService.buildReminderPlan(
+            listOf(item("a", "2027-01-11", remindDays = listOf(45))), "09:00", now,
+        )
+        // 2027-01-11 往前 45 天 = 2026-11-27
+        assertEquals(listOf("2026-11-27:a:45"), plan.map { it.key })
+    }
+
+    @Test
     fun `重复档位去重`() {
         val now = LocalDateTime.of(2026, 11, 11, 10, 0)
         val plan = ReminderService.buildReminderPlan(

@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,7 +27,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -36,9 +36,11 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
@@ -59,25 +61,30 @@ import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.jimmy.expiryreminder.core.Categories
 import com.jimmy.expiryreminder.core.Dates
 import com.jimmy.expiryreminder.core.ExpiryCalc
@@ -87,16 +94,25 @@ import com.jimmy.expiryreminder.core.ExpiryStore
 import com.jimmy.expiryreminder.core.ImageStore
 import com.jimmy.expiryreminder.core.MAX_IMAGES
 import com.jimmy.expiryreminder.ocr.DateCandidate
+import com.jimmy.expiryreminder.ocr.DateExtractor
 import com.jimmy.expiryreminder.ocr.DateRole
 import com.jimmy.expiryreminder.ocr.NameCandidate
+import com.jimmy.expiryreminder.ocr.NameExtractor
+import com.jimmy.expiryreminder.ocr.OcrEngine
 import com.jimmy.expiryreminder.ocr.PrefillDraft
+import com.jimmy.expiryreminder.ocr.ResultMerger
+import com.jimmy.expiryreminder.ocr.ShelfLifeCandidate
+import com.jimmy.expiryreminder.core.REMIND_DAY_MAX
 import com.jimmy.expiryreminder.core.REMIND_DAY_OPTIONS
 import com.jimmy.expiryreminder.core.ShelfLifeUnit
 import com.jimmy.expiryreminder.core.label
+import com.jimmy.expiryreminder.core.normalizeImagePath
+import com.jimmy.expiryreminder.core.normalizeRemindDays
 import com.jimmy.expiryreminder.core.remindDayLabel
 import com.jimmy.expiryreminder.core.uid
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.Instant
 import java.time.ZoneId
@@ -159,6 +175,8 @@ fun EditScreen(
     var note by remember { mutableStateOf(existing?.note ?: "") }
     var images by remember { mutableStateOf(existing?.images ?: prefill?.images ?: emptyList()) }
     var confirmDelete by remember { mutableStateOf(false) }
+    // 自定义提前天数的弹窗开关
+    var customDayDialog by remember { mutableStateOf(false) }
     // 正在查看的图片下标：null = 查看器未打开
     var viewerIndex by remember { mutableStateOf<Int?>(null) }
 
@@ -171,18 +189,24 @@ fun EditScreen(
     var shelfLifeFromOcr by remember { mutableStateOf((prefill?.shelfLife ?: 0) > 0) }
     var expireFromOcr by remember { mutableStateOf(prefill?.expireAt?.isNotEmpty() == true) }
 
-    val nameCandidates = prefill?.nameCandidates.orEmpty()
-    val dateCandidates = prefill?.dateCandidates.orEmpty()
+    // 重新识别会往候选里追加新结果，所以候选列表必须是可变状态（初值来自首次识别）
+    var nameCandidates by remember { mutableStateOf(prefill?.nameCandidates.orEmpty()) }
+    var dateCandidates by remember { mutableStateOf(prefill?.dateCandidates.orEmpty()) }
 
     // 未填项/图片读取错误统一走「自动消失」的底部提示，不再占用页面顶部空间
     val snackbar = remember { SnackbarHostState() }
-    fun showError(msg: String) {
+    // 提示分两色：校验失败用错误色，识别完成这类正常反馈用普通色，避免「完成」也显红
+    var snackbarIsError by remember { mutableStateOf(true) }
+    fun showMessage(msg: String, isError: Boolean) {
+        snackbarIsError = isError
         scope.launch {
             // 连续点击保存时不排队，直接用最新提示覆盖
             snackbar.currentSnackbarData?.dismiss()
             snackbar.showSnackbar(message = msg, duration = SnackbarDuration.Short)
         }
     }
+    fun showError(msg: String) = showMessage(msg, isError = true)
+    fun showInfo(msg: String) = showMessage(msg, isError = false)
     val scrollState = rememberScrollState()
 
     // 新增时自动聚焦名称输入框并弹出键盘，省掉一次点击。
@@ -259,6 +283,97 @@ fun EditScreen(
     var categoryMenu by remember { mutableStateOf(false) }
     var unitMenu by remember { mutableStateOf(false) }
 
+    // 图片：拖动排序 / 重新识别（都由按钮触发）
+    var sortDialog by remember { mutableStateOf(false) }
+    var reOcrDialog by remember { mutableStateOf(false) }
+    var reOcrRunning by remember { mutableStateOf(false) }
+    var reOcrDone by remember { mutableStateOf(0) }
+    var reOcrTotal by remember { mutableStateOf(0) }
+
+    /**
+     * 重新识别选中的图片。
+     *
+     * 只做「补充」：候选去重后追加，字段只在空着时填；用户已经填/改过的内容一律不动。
+     * 串行识别——ML Kit 的识别器实例并发调用不可靠。
+     */
+    fun reRecognize(targets: List<ExpiryImage>) {
+        if (targets.isEmpty() || reOcrRunning) return
+        reOcrRunning = true
+        reOcrDone = 0
+        reOcrTotal = targets.size
+        reOcrDialog = false
+        scope.launch {
+            val nameGroups = mutableListOf<List<NameCandidate>>()
+            val dateGroups = mutableListOf<List<DateCandidate>>()
+            val shelfGroups = mutableListOf<List<ShelfLifeCandidate>>()
+            var emptyCount = 0
+            for ((index, image) in targets.withIndex()) {
+                val safePath = normalizeImagePath(image.path)
+                val lines = if (safePath.isEmpty()) {
+                    emptyList()
+                } else {
+                    withContext(Dispatchers.IO) {
+                        runCatching { OcrEngine.recognizeFile(ImageStore.imageFile(context, safePath)) }
+                            .getOrDefault(emptyList())
+                    }
+                }
+                if (lines.isEmpty()) {
+                    emptyCount += 1
+                } else {
+                    nameGroups += NameExtractor.extract(lines, index)
+                    dateGroups += DateExtractor.extract(lines, index)
+                    shelfGroups += DateExtractor.extractShelfLife(lines, index)
+                }
+                reOcrDone = index + 1
+            }
+            val merged = ResultMerger.merge(nameGroups, dateGroups, shelfGroups)
+
+            // 候选：按值去重后并进现有列表，交给用户点选
+            val knownDates = dateCandidates.map { it.isoDate }.toSet()
+            dateCandidates = dateCandidates + merged.dates.filter { it.isoDate !in knownDates }
+            val knownNames = nameCandidates.map { it.text }.toSet()
+            nameCandidates = nameCandidates + merged.names.filter { it.text !in knownNames }
+
+            // 字段：只填空着的
+            val bestName = merged.names.firstOrNull()
+            if (name.isBlank() && bestName != null) {
+                name = bestName.text
+                nameFromOcr = true
+            }
+            val life = merged.shelfLives.filter { it.prefillable }.maxByOrNull { it.score }
+            if (shelfLifeText.isEmpty() && life != null) {
+                shelfLifeText = life.amount.toString()
+                unit = life.unit
+                shelfLifeFromOcr = true
+            }
+            val produce = merged.dates
+                .filter { it.role == DateRole.produce && it.prefillable }
+                .maxByOrNull { it.score }
+            if (productionDate.isEmpty() && produce != null) {
+                productionDate = produce.isoDate
+                productionFromOcr = true
+            }
+            val expire = merged.dates
+                .filter { it.role == DateRole.expire && it.prefillable }
+                .maxByOrNull { it.score }
+            if (expireAt.isEmpty() && expire != null) {
+                expireAt = expire.isoDate
+                expireFromOcr = true
+                manualExpire = true
+            }
+
+            reOcrRunning = false
+            if (merged.dates.isEmpty() && merged.names.isEmpty()) {
+                showError(
+                    if (emptyCount == targets.size) "${targets.size} 张都没读出内容"
+                    else "没有识别出新内容",
+                )
+            } else {
+                showInfo("重新识别完成，新结果已补进候选")
+            }
+        }
+    }
+
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().imePadding()) {
             // 紧凑头部（替代 TopAppBar 的 64dp，压到 48dp）
@@ -322,6 +437,7 @@ fun EditScreen(
                             fixedHeight = 48.dp,
                             modifier = Modifier.fillMaxWidth(),
                             focusRequester = nameFocus,
+                            showClear = true,
                         )
 
                         // 品名候选：文字长，用竖排单选而不是横排 chip
@@ -401,20 +517,20 @@ fun EditScreen(
                             it.isoDate != expireAt && it.isoDate != productionDate
                         }
                         if (dateCandidatesVisible) {
+                            // 角色判不出来的日期不再替用户猜成「到期」，点开由用户选填哪个字段
                             DateCandidateList(
                                 candidates = dateCandidates,
                                 productionDate = productionDate,
                                 expireAt = expireAt,
-                                onSelect = { candidate ->
-                                    when (candidate.role) {
-                                        DateRole.expire, DateRole.unknown -> {
-                                            expireAt = candidate.isoDate
-                                            manualExpire = true
-                                        }
-                                        DateRole.produce -> {
-                                            productionDate = candidate.isoDate
-                                            manualExpire = false
-                                        }
+                                onFill = { candidate, asProductionDate ->
+                                    if (asProductionDate) {
+                                        productionDate = candidate.isoDate
+                                        // 有保质期就回到自动推算；没有则保留已填到期日，避免被清空
+                                        manualExpire = expireAt.isNotEmpty() &&
+                                            (shelfLifeText.toIntOrNull() ?: 0) <= 0
+                                    } else {
+                                        expireAt = candidate.isoDate
+                                        manualExpire = true
                                     }
                                     productionFromOcr = false
                                     expireFromOcr = false
@@ -461,6 +577,7 @@ fun EditScreen(
                                         placeholder = "选填",
                                         fixedHeight = 48.dp,
                                         modifier = Modifier.fillMaxWidth(),
+                                        showClear = true,
                                     )
                                 }
                                 Column(Modifier.weight(1f)) {
@@ -536,12 +653,18 @@ fun EditScreen(
 
                         // -------------------------------------- 提前提醒
                         FieldLabel("提前提醒")
+                        // 预设档位之外的用户自填天数：与预设一起按由远到近排，「当天」固定收尾
+                        val customRemindDays =
+                            remindDays.filter { it !in REMIND_DAY_OPTIONS }.sortedDescending()
+                        val remindChips =
+                            (REMIND_DAY_OPTIONS.filter { it > 0 } + customRemindDays)
+                                .sortedDescending() + REMIND_DAY_OPTIONS.filter { it == 0 }
                         FlowRow(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalArrangement = Arrangement.spacedBy(2.dp),
                         ) {
-                            for (day in REMIND_DAY_OPTIONS) {
+                            for (day in remindChips) {
                                 val selectedDay = day in remindDays
                                 FilterChip(
                                     selected = selectedDay,
@@ -562,6 +685,20 @@ fun EditScreen(
                                     } else null,
                                 )
                             }
+                            // 自定义入口：录入 1~365 天，确认后作为一枚档位加入
+                            FilterChip(
+                                selected = false,
+                                onClick = { customDayDialog = true },
+                                label = { Text("自定义") },
+                                modifier = Modifier.height(30.dp),
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.Add,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                },
+                            )
                         }
                         if (remindDays.isEmpty()) {
                             Text(
@@ -578,6 +715,7 @@ fun EditScreen(
                             onValueChange = { note = it.take(MAX_NOTE) },
                             placeholder = "存放位置、开封日期等",
                             modifier = Modifier.fillMaxWidth(),
+                            showClear = true,
                         )
                         Text(
                             "${note.length} / $MAX_NOTE",
@@ -591,6 +729,31 @@ fun EditScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             FieldLabel("图片", optional = true)
                             Spacer(Modifier.weight(1f))
+                            if (images.size >= 2) {
+                                Text(
+                                    "排序",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable { sortDialog = true }
+                                        .padding(horizontal = 6.dp, vertical = 6.dp),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                            }
+                            if (images.isNotEmpty()) {
+                                Text(
+                                    if (reOcrRunning) "识别中 $reOcrDone/$reOcrTotal" else "重新识别",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (reOcrRunning) MaterialTheme.colorScheme.onSurfaceVariant
+                                    else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable(enabled = !reOcrRunning) { reOcrDialog = true }
+                                        .padding(horizontal = 6.dp, vertical = 6.dp),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                            }
                             Text(
                                 "${images.size} / $MAX_IMAGES",
                                 style = MaterialTheme.typography.bodySmall,
@@ -755,9 +918,12 @@ fun EditScreen(
             Snackbar(
                 snackbarData = data,
                 shape = RoundedCornerShape(10.dp),
-                containerColor = MaterialTheme.colorScheme.errorContainer,
-                contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                dismissActionContentColor = MaterialTheme.colorScheme.onErrorContainer,
+                containerColor = if (snackbarIsError) MaterialTheme.colorScheme.errorContainer
+                else MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = if (snackbarIsError) MaterialTheme.colorScheme.onErrorContainer
+                else MaterialTheme.colorScheme.onSecondaryContainer,
+                dismissActionContentColor = if (snackbarIsError) MaterialTheme.colorScheme.onErrorContainer
+                else MaterialTheme.colorScheme.onSecondaryContainer,
             )
         }
     }
@@ -805,6 +971,40 @@ fun EditScreen(
         )
     }
 
+    // 自定义提前天数：确认后并入档位（越界/重复在弹窗内拦下）
+    if (customDayDialog) {
+        CustomRemindDayDialog(
+            remindDays = remindDays,
+            onConfirm = { day ->
+                remindDays = normalizeRemindDays(remindDays + day)
+                customDayDialog = false
+            },
+            onDismiss = { customDayDialog = false },
+        )
+    }
+
+    // 图片拖动排序：只在「排序」按钮触发的弹窗里生效，日常点击缩略图仍是看大图
+    if (sortDialog && images.size >= 2) {
+        ImageSortDialog(
+            images = images,
+            onMove = { from, to ->
+                if (from != to && from in images.indices && to in images.indices) {
+                    images = images.toMutableList().apply { add(to, removeAt(from)) }
+                }
+            },
+            onDismiss = { sortDialog = false },
+        )
+    }
+
+    // 重新识别：先选对象，再执行
+    if (reOcrDialog && images.isNotEmpty()) {
+        ReRecognizeDialog(
+            images = images,
+            onConfirm = { targets -> reRecognize(targets) },
+            onDismiss = { reOcrDialog = false },
+        )
+    }
+
     // 全屏图片查看器：编辑中的草稿图片也能看（文件在入库时就已落盘）
     viewerIndex?.let { idx ->
         ImageViewerOverlay(
@@ -844,6 +1044,80 @@ private fun FieldLabel(text: String, optional: Boolean = false, ocrBadge: Boolea
             )
         }
     }
+}
+
+/**
+ * 自定义提前天数弹窗：只收 1~[REMIND_DAY_MAX] 的正整数，越界与重复档位在弹窗内就地拦下，
+ * 免得加进档位后才发现「填了也不生效」。
+ */
+@Composable
+private fun CustomRemindDayDialog(
+    remindDays: List<Int>,
+    onConfirm: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var text by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        // 等输入框挂到树上再收焦点，否则键盘不弹
+        withFrameNanos { }
+        focus.requestFocus()
+    }
+
+    fun submit() {
+        val day = text.toIntOrNull()
+        val message = when {
+            text.isEmpty() -> "请输入天数"
+            day == null -> "请输入数字"
+            else -> when {
+                day < 1 -> "天数需大于 0"
+                day > REMIND_DAY_MAX -> "最多提前 $REMIND_DAY_MAX 天"
+                day in remindDays -> "已添加该档位"
+                else -> null
+            }
+        }
+        error = message
+        if (message == null && day != null) onConfirm(day)
+    }
+
+    val errorText = error
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("自定义提前天数") },
+        text = {
+            Column {
+                Text(
+                    "到期前第几天提醒，可填 1~$REMIND_DAY_MAX 天。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                InputBox(
+                    value = text,
+                    onValueChange = {
+                        text = it.filter { c -> c.isDigit() }.take(3)
+                        error = null
+                    },
+                    placeholder = "例如 45",
+                    fixedHeight = 48.dp,
+                    focusRequester = focus,
+                    isError = errorText != null,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (errorText != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        errorText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { submit() }) { Text("添加") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 /**
@@ -907,14 +1181,16 @@ private fun NameCandidateList(
  * 日期候选：横排 chip。
  *
  * 一张包装常同时印着生产日期、批号、有效期，让用户点一下比让程序猜更可靠。
- * 已被采用的候选会高亮，用户手改日期后高亮自然消失。
+ * 关键词能定角色的候选点一下直接填对应字段；判不出角色的（[DateRole.unknown]）
+ * 点开菜单让用户自己决定填到生产日期还是到期日期。
+ * 已被采用的候选会高亮并标出填到了哪个字段。
  */
 @Composable
 private fun DateCandidateList(
     candidates: List<DateCandidate>,
     productionDate: String,
     expireAt: String,
-    onSelect: (DateCandidate) -> Unit,
+    onFill: (candidate: DateCandidate, asProductionDate: Boolean) -> Unit,
 ) {
     Column(
         Modifier
@@ -926,9 +1202,9 @@ private fun DateCandidateList(
     ) {
         Text(
             if (candidates.size == 1) {
-                "照片里检出 1 个日期，点选填入"
+                "照片里检出 1 个日期，点选确认填到哪个字段"
             } else {
-                "照片里检出 ${candidates.size} 个日期，确认哪个是有效期"
+                "照片里检出 ${candidates.size} 个日期，点选确认填到哪个字段"
             },
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurface,
@@ -938,83 +1214,303 @@ private fun DateCandidateList(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             for (candidate in candidates) {
-                val adopted = when (candidate.role) {
-                    DateRole.produce -> candidate.isoDate == productionDate
-                    DateRole.expire, DateRole.unknown -> candidate.isoDate == expireAt
+                // 同一个日期可能两张图里都被认出来，后缀讲清它现在落在哪个字段
+                val filledAs = when (candidate.isoDate) {
+                    productionDate -> "→ 生产日期"
+                    expireAt -> "→ 到期日期"
+                    else -> null
                 }
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (adopted) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.28f)
-                    else MaterialTheme.colorScheme.surface,
-                    border = androidx.compose.foundation.BorderStroke(
-                        if (adopted) 1.5.dp else 1.dp,
-                        if (adopted) MaterialTheme.colorScheme.tertiary
-                        else MaterialTheme.colorScheme.outline,
-                    ),
-                    modifier = Modifier.clickable { onSelect(candidate) },
-                ) {
-                    Text(
-                        "${candidate.isoDate} ${candidate.role.label}",
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    )
+                val adopted = filledAs != null
+                // 识别阶段判不出角色：把「填到哪」交给用户决定
+                val needsChoice = candidate.role == DateRole.unknown
+                var menuOpen by remember(candidate) { mutableStateOf(false) }
+                Box {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (adopted) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.28f)
+                        else MaterialTheme.colorScheme.surface,
+                        border = androidx.compose.foundation.BorderStroke(
+                            if (adopted) 1.5.dp else 1.dp,
+                            if (adopted) MaterialTheme.colorScheme.tertiary
+                            else MaterialTheme.colorScheme.outline,
+                        ),
+                        modifier = Modifier.clickable {
+                            when {
+                                needsChoice -> menuOpen = true
+                                candidate.role == DateRole.produce -> onFill(candidate, true)
+                                else -> onFill(candidate, false)
+                            }
+                        },
+                    ) {
+                        Row(
+                            Modifier.padding(
+                                start = 10.dp,
+                                end = if (needsChoice) 6.dp else 10.dp,
+                                top = 6.dp,
+                                bottom = 6.dp,
+                            ),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "${candidate.isoDate} ${candidate.role.label}",
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                            if (filledAs != null) {
+                                Text(
+                                    filledAs,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.padding(start = 4.dp),
+                                )
+                            }
+                            if (needsChoice) {
+                                Icon(
+                                    Icons.Filled.KeyboardArrowDown,
+                                    contentDescription = "选择填到哪个字段",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                            }
+                        }
+                    }
+                    DropdownMenu(
+                        expanded = menuOpen,
+                        onDismissRequest = { menuOpen = false },
+                        shape = RoundedCornerShape(12.dp),
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("填为生产日期") },
+                            onClick = {
+                                menuOpen = false
+                                onFill(candidate, true)
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("填为到期日期") },
+                            onClick = {
+                                menuOpen = false
+                                onFill(candidate, false)
+                            },
+                        )
+                    }
                 }
             }
         }
     }
 }
 
-/** 统一的描边输入框：内边距 12dp（无浮空标签，标签在框外），单行时文字垂直居中不裁切。 */
+/**
+ * 图片排序弹窗（由「排序」按钮触发，不占用缩略图的点击/长按手势）。
+ *
+ * 按住右侧手柄上下拖动，越过半行高就与相邻项交换，松手即生效，不需要再点保存。
+ */
 @Composable
-private fun InputBox(
-    value: String,
-    onValueChange: (String) -> Unit,
-    placeholder: String,
-    modifier: Modifier = Modifier,
-    minLines: Int = 1,
-    fixedHeight: androidx.compose.ui.unit.Dp? = null,
-    focusRequester: FocusRequester? = null,
+private fun ImageSortDialog(
+    images: List<ExpiryImage>,
+    onMove: (from: Int, to: Int) -> Unit,
+    onDismiss: () -> Unit,
 ) {
-    Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        modifier = modifier,
-    ) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .then(if (fixedHeight != null) Modifier.height(fixedHeight) else Modifier)
-                .padding(horizontal = 12.dp, vertical = if (fixedHeight != null) 0.dp else 12.dp),
-            contentAlignment = if (fixedHeight != null) Alignment.CenterStart else Alignment.TopStart,
-        ) {
-            if (value.isEmpty()) {
+    // 拖动回调里要读最新的顺序，不能用 composition 时捕获的旧列表
+    val latestImages by rememberUpdatedState(images)
+    var draggingId by remember { mutableStateOf<String?>(null) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
+    val rowHeight = 60.dp
+    val rowPx = with(LocalDensity.current) { rowHeight.toPx() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("调整图片顺序") },
+        text = {
+            Column {
                 Text(
-                    placeholder,
-                    style = MaterialTheme.typography.bodyMedium,
+                    "按住右侧手柄上下拖动，第 1 张作为封面。",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 )
+                Spacer(Modifier.height(8.dp))
+                for ((index, image) in images.withIndex()) {
+                    key(image.id) {
+                        val dragging = draggingId == image.id
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(rowHeight)
+                                .zIndex(if (dragging) 1f else 0f)
+                                .graphicsLayer { if (dragging) translationY = offsetY }
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (dragging) MaterialTheme.colorScheme.surfaceVariant
+                                    else Color.Transparent,
+                                ),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "${index + 1}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.width(20.dp),
+                            )
+                            val file = rememberFileForPath(image.path)
+                            if (file != null) {
+                                DraftImage(
+                                    file = file,
+                                    size = 42.dp,
+                                    modifier = Modifier.clip(RoundedCornerShape(8.dp)),
+                                )
+                            } else {
+                                Box(
+                                    Modifier
+                                        .size(42.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                                )
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                if (index == 0) "封面" else "",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Box(
+                                Modifier
+                                    .size(44.dp)
+                                    .pointerInput(image.id) {
+                                        detectDragGestures(
+                                            onDragStart = {
+                                                draggingId = image.id
+                                                offsetY = 0f
+                                            },
+                                            onDragEnd = {
+                                                draggingId = null
+                                                offsetY = 0f
+                                            },
+                                            onDragCancel = {
+                                                draggingId = null
+                                                offsetY = 0f
+                                            },
+                                        ) { change, dragAmount ->
+                                            change.consume()
+                                            offsetY += dragAmount.y
+                                            val from = latestImages.indexOfFirst { it.id == image.id }
+                                            if (from < 0) return@detectDragGestures
+                                            when {
+                                                offsetY > rowPx / 2f && from < latestImages.lastIndex -> {
+                                                    onMove(from, from + 1)
+                                                    offsetY -= rowPx
+                                                }
+                                                offsetY < -rowPx / 2f && from > 0 -> {
+                                                    onMove(from, from - 1)
+                                                    offsetY += rowPx
+                                                }
+                                            }
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Filled.Menu,
+                                    contentDescription = "拖动排序",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                        }
+                    }
+                }
             }
-            BasicTextField(
-                value = value,
-                onValueChange = onValueChange,
-                textStyle = MaterialTheme.typography.bodyMedium.copy(
-                    color = MaterialTheme.colorScheme.onSurface,
-                ),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                singleLine = fixedHeight != null,
-                minLines = if (fixedHeight != null) 1 else minLines,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(
-                        if (focusRequester != null) Modifier.focusRequester(focusRequester)
-                        else Modifier
-                    ),
-            )
-        }
-    }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("完成") } },
+    )
+}
+
+/**
+ * 重新识别弹窗：先选对象，再执行。
+ *
+ * 默认全选（多数场景是整批重跑），只想补某一张时逐张取消勾选即可。
+ */
+@Composable
+private fun ReRecognizeDialog(
+    images: List<ExpiryImage>,
+    onConfirm: (List<ExpiryImage>) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var selected by remember { mutableStateOf(images.map { it.id }.toSet()) }
+    val allSelected = images.isNotEmpty() && selected.size == images.size
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("重新识别") },
+        text = {
+            Column {
+                Text(
+                    "选择要重新识别的图片。结果只补充空着的字段和候选，不会覆盖已填内容。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable {
+                            selected = if (allSelected) emptySet() else images.map { it.id }.toSet()
+                        }
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        if (allSelected) "取消全选" else "全选",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                for ((index, image) in images.withIndex()) {
+                    val checked = image.id in selected
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable {
+                                selected = if (checked) selected - image.id else selected + image.id
+                            }
+                            .padding(end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(
+                            checked = checked,
+                            onCheckedChange = { on ->
+                                selected = if (on) selected + image.id else selected - image.id
+                            },
+                        )
+                        val file = rememberFileForPath(image.path)
+                        if (file != null) {
+                            DraftImage(
+                                file = file,
+                                size = 38.dp,
+                                modifier = Modifier.clip(RoundedCornerShape(8.dp)),
+                            )
+                        } else {
+                            Box(
+                                Modifier
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text("第 ${index + 1} 张", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = selected.isNotEmpty(),
+                onClick = { onConfirm(images.filter { it.id in selected }) },
+            ) { Text("开始识别") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 /** 下拉/日期选择框：白底描边圆角，可选前后缀图标。 */

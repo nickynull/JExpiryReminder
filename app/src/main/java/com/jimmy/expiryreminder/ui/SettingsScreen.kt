@@ -1,11 +1,13 @@
 package com.jimmy.expiryreminder.ui
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings as AndroidSettings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -291,6 +293,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                     )
                 },
             )
+
+            ListItem(
+                headlineContent = { Text("GitHub 项目地址") },
+                supportingContent = { Text(GITHUB_URL.removePrefix("https://")) },
+                modifier = Modifier.clickable { openUrl(context, GITHUB_URL) },
+                trailingContent = {
+                    TextButton(onClick = { openUrl(context, GITHUB_URL) }) { Text("打开") }
+                },
+            )
         }
     }
 
@@ -349,4 +360,13 @@ private fun modeLabel(mode: SettingsStore.ThemeMode): String = when (mode) {
     SettingsStore.ThemeMode.system -> "跟随系统"
     SettingsStore.ThemeMode.light -> "浅色"
     SettingsStore.ThemeMode.dark -> "深色"
+}
+
+/** 关于页展示的项目主页。 */
+private const val GITHUB_URL = "https://github.com/nickynull/JExpiryReminder"
+
+private fun openUrl(context: Context, url: String) {
+    runCatching {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    }
 }

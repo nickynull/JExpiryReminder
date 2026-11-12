@@ -8,6 +8,7 @@ import com.jimmy.expiryreminder.core.ExpiryStore
 import com.jimmy.expiryreminder.core.hasNameConflict
 import com.jimmy.expiryreminder.core.ShelfLifeUnit
 import com.jimmy.expiryreminder.core.normalizeImagePath
+import com.jimmy.expiryreminder.core.normalizeRemindDays
 import com.jimmy.expiryreminder.core.orderedBy
 import com.jimmy.expiryreminder.core.remindDaysSummary
 import com.jimmy.expiryreminder.notify.ReminderService
@@ -140,6 +141,20 @@ class ModelsTest {
         assertEquals("提前 7 天", remindDaysSummary(listOf(7)))
         assertEquals("当天提醒", remindDaysSummary(listOf(0)))
         assertNull(remindDaysSummary(emptyList()))
+    }
+
+    @Test
+    fun `自定义档位同样进摘要`() {
+        assertEquals("提前 45/7/1 天", remindDaysSummary(listOf(7, 45, 1)))
+        assertEquals("提前 120/45 天 · 当天", remindDaysSummary(listOf(45, 0, 120)))
+    }
+
+    @Test
+    fun `normalizeRemindDays 去重排序并丢弃越界值`() {
+        assertEquals(listOf(45, 7, 1, 0), normalizeRemindDays(listOf(7, 45, 7, 1, 0)))
+        // 负数（脏数据）与超过上限的天数直接丢掉
+        assertEquals(listOf(365, 3), normalizeRemindDays(listOf(-1, 3, 366, 365)))
+        assertEquals(emptyList<Int>(), normalizeRemindDays(listOf(-5, 400)))
     }
 
     @Test
