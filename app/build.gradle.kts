@@ -26,7 +26,7 @@ android {
         // versionName 由 release-please 自动维护（generic extra-file 只替换标记之间的版本号）；
         // versionCode 从 versionName 推导（1.2.29 -> 10229），保证每次发版递增
         // x-release-please-start-version
-        versionName = "1.2.29"
+        versionName = "1.3.0"
         // x-release-please-end
         val (major, minor, patch) = versionName!!.split(".").map { it.toInt() }
         versionCode = major * 10000 + minor * 100 + patch
