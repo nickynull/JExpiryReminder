@@ -2,6 +2,7 @@ package com.jimmy.expiryreminder.ui
 
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
@@ -25,16 +26,23 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
+/** 图片加载状态：转圈 → 成功 / 失败（失败显示灰底占位，不再永远转圈）。 */
+private sealed interface DataImageLoad {
+    data object Loading : DataImageLoad
+    data class Ok(val bitmap: android.graphics.Bitmap) : DataImageLoad
+    data object Failed : DataImageLoad
+}
+
 /** 从数据目录的相对路径异步加载图片（自动降采样，避免大图占内存）。 */
 @Composable
 fun DataImage(path: String, size: Dp, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, path) {
+    val load by produceState<DataImageLoad>(initialValue = DataImageLoad.Loading, path) {
         value = withContext(Dispatchers.IO) {
             val safe = com.jimmy.expiryreminder.core.normalizeImagePath(path)
-            if (safe.isEmpty()) return@withContext null
+            if (safe.isEmpty()) return@withContext DataImageLoad.Failed
             val file = ImageStore.imageFile(context, safe)
-            if (!file.exists()) return@withContext null
+            if (!file.exists()) return@withContext DataImageLoad.Failed
             try {
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeFile(file.absolutePath, bounds)
@@ -43,26 +51,30 @@ fun DataImage(path: String, size: Dp, modifier: Modifier = Modifier) {
                 while (bounds.outWidth / (sample * 2) >= target || bounds.outHeight / (sample * 2) >= target) {
                     sample *= 2
                 }
-                BitmapFactory.decodeFile(
+                val bmp = BitmapFactory.decodeFile(
                     file.absolutePath,
                     BitmapFactory.Options().apply { inSampleSize = sample },
                 )
+                if (bmp != null) DataImageLoad.Ok(bmp) else DataImageLoad.Failed
             } catch (_: Exception) {
-                null
+                DataImageLoad.Failed
             }
         }
     }
     Box(modifier.size(size), contentAlignment = Alignment.Center) {
-        val bmp = bitmap
-        if (bmp != null) {
-            Image(
-                bitmap = bmp.asImageBitmap(),
+        when (val l = load) {
+            is DataImageLoad.Ok -> Image(
+                bitmap = l.bitmap.asImageBitmap(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = modifier.size(size),
             )
-        } else {
-            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            is DataImageLoad.Loading -> CircularProgressIndicator(
+                modifier = Modifier.size(18.dp), strokeWidth = 2.dp,
+            )
+            DataImageLoad.Failed -> Box(
+                Modifier.size(size).background(MaterialTheme.colorScheme.surfaceVariant),
+            )
         }
     }
 }

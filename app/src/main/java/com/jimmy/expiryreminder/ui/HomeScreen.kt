@@ -153,6 +153,8 @@ fun HomeScreen(
     var selected by remember { mutableStateOf(setOf<String>()) }
     var pendingDelete by remember { mutableStateOf<ExpiryItem?>(null) }
     var categoryMenuOpen by remember { mutableStateOf(false) }
+    // 全屏图片查看器：paths + 起始下标，null = 未打开
+    var viewer by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
 
     // 多选态下返回 = 退出多选；主页返回 = 两次才退出（防误触）
     var lastBackAt by remember { mutableStateOf(0L) }
@@ -654,6 +656,9 @@ fun HomeScreen(
                                     }
                                 },
                                 onSwipeDelete = { pendingDelete = item },
+                                onViewImages = {
+                                    viewer = item.images.map { it.path } to 0
+                                },
                             )
                         }
                     }
@@ -677,6 +682,14 @@ fun HomeScreen(
             dismissButton = {
                 TextButton(onClick = { pendingDelete = null }) { Text("取消") }
             },
+        )
+    }
+
+    viewer?.let { (paths, index) ->
+        ImageViewerOverlay(
+            paths = paths,
+            initialIndex = index,
+            onDismiss = { viewer = null },
         )
     }
 }
@@ -791,6 +804,7 @@ private fun ItemRow(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onSwipeDelete: () -> Unit,
+    onViewImages: () -> Unit,
 ) {
     val days = Dates.daysUntil(item.expireAt)
     val status = store.statusOf(item)
@@ -902,6 +916,19 @@ private fun ItemRow(
                                     modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
                                 )
                             }
+                        }
+                    }
+                    // 图片缩略图：点击直接看大图（多张时在查看器里翻页）
+                    if (!selectMode && item.images.isNotEmpty()) {
+                        Spacer(Modifier.width(6.dp))
+                        Surface(
+                            onClick = onViewImages,
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp, MaterialTheme.colorScheme.outline,
+                            ),
+                        ) {
+                            DataImage(item.images.first().path, 44.dp)
                         }
                     }
                     if (selectMode) {

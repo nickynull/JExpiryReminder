@@ -132,6 +132,8 @@ fun EditScreen(itemId: String?, defaultCategory: String? = null, onDone: () -> U
     var note by remember { mutableStateOf(existing?.note ?: "") }
     var images by remember { mutableStateOf(existing?.images ?: emptyList()) }
     var confirmDelete by remember { mutableStateOf(false) }
+    // 正在查看的图片下标：null = 查看器未打开
+    var viewerIndex by remember { mutableStateOf<Int?>(null) }
 
     // 未填项/图片读取错误统一走「自动消失」的底部提示，不再占用页面顶部空间
     val snackbar = remember { SnackbarHostState() }
@@ -550,9 +552,13 @@ fun EditScreen(itemId: String?, defaultCategory: String? = null, onDone: () -> U
                                     onClick = { imageSourceMenu = false; pickImage.launch("image/*") },
                                 )
                             }
-                            // 缩略图
-                            for (img in images) {
-                                Box {
+                            // 缩略图（点击查看大图，右上角小圆点是删除）
+                            images.forEachIndexed { imgIndex, img ->
+                                Box(
+                                    Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable { viewerIndex = imgIndex },
+                                ) {
                                     val file = rememberFileForPath(img.path)
                                     if (file != null) {
                                         DraftImage(
@@ -707,6 +713,15 @@ fun EditScreen(itemId: String?, defaultCategory: String? = null, onDone: () -> U
                 }) { Text("删除") }
             },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消") } },
+        )
+    }
+
+    // 全屏图片查看器：编辑中的草稿图片也能看（文件在入库时就已落盘）
+    viewerIndex?.let { idx ->
+        ImageViewerOverlay(
+            paths = images.map { it.path },
+            initialIndex = idx,
+            onDismiss = { viewerIndex = null },
         )
     }
 }
