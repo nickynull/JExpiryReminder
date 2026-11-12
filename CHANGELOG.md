@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/nickynull/JExpiryReminder/compare/v1.5.0...v1.6.0) (2026-11-12)
+
+
+### Features
+
+* 空间归属、跨设备分享与空间同步 ([5346442](https://github.com/nickynull/JExpiryReminder/commit/5346442d789170c19ef54a7265ac80cf28c81bbf))
+
 ## [1.5.0](https://github.com/nickynull/JExpiryReminder/compare/v1.4.0...v1.5.0) (2026-11-12)
 
 
