@@ -2,6 +2,8 @@
 
 专注「到期提醒」的独立 Android 应用，**Kotlin + Jetpack Compose** 原生实现。
 
+<img src="docs/screenshots/home.jpg" alt="到期提醒 · 列表页" width="300">
+
 ## 构建
 
 ```bash
