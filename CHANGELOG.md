@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/nickynull/JExpiryReminder/compare/v1.4.0...v1.5.0) (2026-11-12)
+
+
+### Features
+
+* 首页搜索移到底栏、输入框统一、提前提醒天数可自定义 ([1389e70](https://github.com/nickynull/JExpiryReminder/commit/1389e7018cab3f96f0122ecb6169cad29fae891d))
+
 ## [1.4.0](https://github.com/nickynull/JExpiryReminder/compare/v1.3.0...v1.4.0) (2026-11-12)
 
 
