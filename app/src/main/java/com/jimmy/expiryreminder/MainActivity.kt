@@ -1,6 +1,7 @@
 package com.jimmy.expiryreminder
 
 import android.Manifest
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -27,6 +28,8 @@ import com.jimmy.expiryreminder.ui.CategoryScreen
 import com.jimmy.expiryreminder.ui.EditScreen
 import com.jimmy.expiryreminder.ui.HomeFilterState
 import com.jimmy.expiryreminder.ui.HomeScreen
+import com.jimmy.expiryreminder.ui.OcrProgressScreen
+import com.jimmy.expiryreminder.ui.PickImagesScreen
 import com.jimmy.expiryreminder.ui.SettingsScreen
 import kotlinx.coroutines.launch
 
@@ -106,13 +109,40 @@ class MainActivity : ComponentActivity() {
                         is Screen.Home -> HomeScreen(
                             filter = homeFilter,
                             onAdd = { defaultCategory -> screen = Screen.Edit(null, defaultCategory) },
+                            onOcr = { defaultCategory ->
+                                screen = Screen.PickImages(defaultCategory)
+                            },
                             onEdit = { id -> screen = Screen.Edit(id) },
                             onSettings = { screen = Screen.Settings },
                             onCategories = { screen = Screen.Categories },
                         )
+                        is Screen.PickImages -> PickImagesScreen(
+                            onBack = { screen = Screen.Home },
+                            onConfirm = { uris ->
+                                screen = Screen.OcrProgress(
+                                    defaultCategory = s.defaultCategory,
+                                    uris = uris.map { it.toString() },
+                                )
+                            },
+                        )
+                        is Screen.OcrProgress -> OcrProgressScreen(
+                            uris = s.uris.mapNotNull { runCatching { Uri.parse(it) }.getOrNull() },
+                            onCancel = {
+                                // 回选图页，把已选照片带回去，不白拍
+                                screen = Screen.PickImages(s.defaultCategory, s.uris)
+                            },
+                            onFinish = { draft ->
+                                screen = Screen.Edit(
+                                    itemId = null,
+                                    defaultCategory = s.defaultCategory,
+                                    prefill = draft,
+                                )
+                            },
+                        )
                         is Screen.Edit -> EditScreen(
                             itemId = s.itemId,
                             defaultCategory = s.defaultCategory,
+                            prefill = s.prefill,
                             onDone = { screen = Screen.Home },
                         )
                         is Screen.Settings -> SettingsScreen(
@@ -132,11 +162,28 @@ sealed interface Screen {
     data object Home : Screen
 
     /** [defaultCategory] 只在新增（[itemId] 为 null）时生效，来自主页当前的筛选分类。 */
-    data class Edit(val itemId: String?, val defaultCategory: String? = null) : Screen
+    data class Edit(
+        val itemId: String?,
+        val defaultCategory: String? = null,
+        /** 识别预填结果；普通新增/编辑为 null。不持久化，仅页面间传递。 */
+        val prefill: com.jimmy.expiryreminder.ocr.PrefillDraft? = null,
+    ) : Screen
     data object Settings : Screen
 
     /** 分类管理（独立页面，不再是弹窗）。 */
     data object Categories : Screen
+
+    /** 选图页。[initialUris] 用于从识别进度页返回时带回已选照片。 */
+    data class PickImages(
+        val defaultCategory: String? = null,
+        val initialUris: List<String> = emptyList(),
+    ) : Screen
+
+    /** 识别进度页。uri 存字符串，便于 rememberSaveable 序列化。 */
+    data class OcrProgress(
+        val defaultCategory: String? = null,
+        val uris: List<String> = emptyList(),
+    ) : Screen
 }
 
 /**
@@ -153,6 +200,16 @@ private val ScreenSaver = mapSaver(
             )
             is Screen.Settings -> mapOf("name" to "settings")
             is Screen.Categories -> mapOf("name" to "categories")
+            is Screen.PickImages -> mapOf(
+                "name" to "pick",
+                "category" to (screen.defaultCategory ?: ""),
+                "uris" to ArrayList(screen.initialUris),
+            )
+            is Screen.OcrProgress -> mapOf(
+                "name" to "ocr",
+                "category" to (screen.defaultCategory ?: ""),
+                "uris" to ArrayList(screen.uris),
+            )
             else -> mapOf("name" to "home")
         }
     },
@@ -163,6 +220,14 @@ private val ScreenSaver = mapSaver(
             "edit" -> Screen.Edit(
                 itemId = (map["itemId"] as? String)?.takeIf { it.isNotEmpty() },
                 defaultCategory = (map["category"] as? String)?.takeIf { it.isNotEmpty() },
+            )
+            "pick" -> Screen.PickImages(
+                defaultCategory = (map["category"] as? String)?.takeIf { it.isNotEmpty() },
+                initialUris = (map["uris"] as? List<*>)?.mapNotNull { it as? String }.orEmpty(),
+            )
+            "ocr" -> Screen.OcrProgress(
+                defaultCategory = (map["category"] as? String)?.takeIf { it.isNotEmpty() },
+                uris = (map["uris"] as? List<*>)?.mapNotNull { it as? String }.orEmpty(),
             )
             else -> Screen.Home
         }

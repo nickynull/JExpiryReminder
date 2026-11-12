@@ -86,6 +86,10 @@ import com.jimmy.expiryreminder.core.ExpiryItem
 import com.jimmy.expiryreminder.core.ExpiryStore
 import com.jimmy.expiryreminder.core.ImageStore
 import com.jimmy.expiryreminder.core.MAX_IMAGES
+import com.jimmy.expiryreminder.ocr.DateCandidate
+import com.jimmy.expiryreminder.ocr.DateRole
+import com.jimmy.expiryreminder.ocr.NameCandidate
+import com.jimmy.expiryreminder.ocr.PrefillDraft
 import com.jimmy.expiryreminder.core.REMIND_DAY_OPTIONS
 import com.jimmy.expiryreminder.core.ShelfLifeUnit
 import com.jimmy.expiryreminder.core.label
@@ -102,38 +106,73 @@ private const val MAX_NOTE = 200
 /** 参考稿样式编辑页：单张白色大卡 + 嵌套有效期分组 + 底部通栏保存。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EditScreen(itemId: String?, defaultCategory: String? = null, onDone: () -> Unit) {
+fun EditScreen(
+    itemId: String?,
+    defaultCategory: String? = null,
+    /** 识别预填结果；纯手动新增时为 null。 */
+    prefill: PrefillDraft? = null,
+    onDone: () -> Unit,
+) {
     val context = LocalContext.current
     val store = ExpiryStore.get()
     val scope = rememberCoroutineScope()
     val existing = itemId?.let { store.getItem(it) }
 
-    var name by remember { mutableStateOf(existing?.name ?: "") }
+    var name by remember { mutableStateOf(existing?.name ?: prefill?.name ?: "") }
     // 新增时优先用主页当前的筛选分类，无筛选（或分类已不存在）则默认「食品」
     var category by remember {
         mutableStateOf(
             existing?.category
+                ?: prefill?.category?.takeIf { store.categoryOf(it) != null }
                 ?: defaultCategory?.takeIf { store.categoryOf(it) != null }
                 ?: Categories.NEW_ITEM_DEFAULT
         )
     }
-    var productionDate by remember { mutableStateOf(existing?.productionDate ?: "") }
-    var shelfLifeText by remember {
-        mutableStateOf(existing?.shelfLife?.takeIf { it > 0 }?.toString() ?: "")
+    var productionDate by remember {
+        mutableStateOf(existing?.productionDate ?: prefill?.productionDate ?: "")
     }
-    var unit by remember { mutableStateOf(existing?.shelfLifeUnit ?: ShelfLifeUnit.month) }
-    var expireAt by remember { mutableStateOf(existing?.expireAt ?: "") }
+    var shelfLifeText by remember {
+        mutableStateOf(
+            existing?.shelfLife?.takeIf { it > 0 }?.toString()
+                ?: prefill?.shelfLife?.takeIf { it > 0 }?.toString()
+                ?: ""
+        )
+    }
+    var unit by remember {
+        mutableStateOf(existing?.shelfLifeUnit ?: prefill?.shelfLifeUnit ?: ShelfLifeUnit.month)
+    }
+    var expireAt by remember { mutableStateOf(existing?.expireAt ?: prefill?.expireAt ?: "") }
     var manualExpire by remember {
-        mutableStateOf(existing != null && existing.expireAt.isNotEmpty() &&
-                ExpiryCalc.computeExpireAt(existing.productionDate, existing.shelfLife, existing.shelfLifeUnit) != existing.expireAt)
+        mutableStateOf(
+            if (existing != null) {
+                existing.expireAt.isNotEmpty() &&
+                    ExpiryCalc.computeExpireAt(
+                        existing.productionDate, existing.shelfLife, existing.shelfLifeUnit,
+                    ) != existing.expireAt
+            } else {
+                prefill?.manualExpire ?: false
+            }
+        )
     }
     var remindDays by remember { mutableStateOf(existing?.remindDays ?: emptyList()) }
     var quantity by remember { mutableStateOf(existing?.quantity ?: 1) }
     var note by remember { mutableStateOf(existing?.note ?: "") }
-    var images by remember { mutableStateOf(existing?.images ?: emptyList()) }
+    var images by remember { mutableStateOf(existing?.images ?: prefill?.images ?: emptyList()) }
     var confirmDelete by remember { mutableStateOf(false) }
     // 正在查看的图片下标：null = 查看器未打开
     var viewerIndex by remember { mutableStateOf<Int?>(null) }
+
+    // 识别徽标：用户在这些字段上产生任何手动输入后，对应徽标就该消失
+    var nameFromOcr by remember { mutableStateOf(prefill?.name?.isNotEmpty() == true) }
+    var categoryFromOcr by remember { mutableStateOf(prefill?.category != null) }
+    var productionFromOcr by remember {
+        mutableStateOf(prefill?.productionDate?.isNotEmpty() == true)
+    }
+    var shelfLifeFromOcr by remember { mutableStateOf((prefill?.shelfLife ?: 0) > 0) }
+    var expireFromOcr by remember { mutableStateOf(prefill?.expireAt?.isNotEmpty() == true) }
+
+    val nameCandidates = prefill?.nameCandidates.orEmpty()
+    val dateCandidates = prefill?.dateCandidates.orEmpty()
 
     // 未填项/图片读取错误统一走「自动消失」的底部提示，不再占用页面顶部空间
     val snackbar = remember { SnackbarHostState() }
@@ -146,10 +185,11 @@ fun EditScreen(itemId: String?, defaultCategory: String? = null, onDone: () -> U
     }
     val scrollState = rememberScrollState()
 
-    // 新增时自动聚焦名称输入框并弹出键盘，省掉一次点击
+    // 新增时自动聚焦名称输入框并弹出键盘，省掉一次点击。
+    // 识别预填进来时字段已有值，此时弹键盘会直接盖住识别结果与候选区，所以跳过。
     val nameFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) {
-        if (existing == null) {
+        if (existing == null && prefill == null) {
             // 等首帧布局完成，否则输入框还没挂上，requestFocus 可能无效
             withFrameNanos { }
             nameFocus.requestFocus()
@@ -274,15 +314,27 @@ fun EditScreen(itemId: String?, defaultCategory: String? = null, onDone: () -> U
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         // -------------------------------------- 物品名称
-                        FieldLabel("物品名称")
+                        FieldLabel("物品名称", ocrBadge = nameFromOcr)
                         InputBox(
                             value = name,
-                            onValueChange = { name = it },
+                            onValueChange = { name = it; nameFromOcr = false },
                             placeholder = "如：维生素 C、护照、牛奶",
                             fixedHeight = 48.dp,
                             modifier = Modifier.fillMaxWidth(),
                             focusRequester = nameFocus,
                         )
+
+                        // 品名候选：文字长，用竖排单选而不是横排 chip
+                        if (nameCandidates.size >= 2) {
+                            NameCandidateList(
+                                candidates = nameCandidates,
+                                selectedText = name,
+                                onSelect = { picked ->
+                                    name = picked
+                                    nameFromOcr = false
+                                },
+                            )
+                        }
 
                         // -------------------------------------- 分类 + 数量
                         Row(
@@ -290,7 +342,7 @@ fun EditScreen(itemId: String?, defaultCategory: String? = null, onDone: () -> U
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             Column(Modifier.weight(1.4f)) {
-                                FieldLabel("分类")
+                                FieldLabel("分类", ocrBadge = categoryFromOcr)
                                 Box {
                                     SelectBox(
                                         text = store.categoryLabelOf(category),
@@ -322,7 +374,11 @@ fun EditScreen(itemId: String?, defaultCategory: String? = null, onDone: () -> U
                                                         )
                                                     )
                                                 },
-                                                onClick = { category = cat.id; categoryMenu = false },
+                                                onClick = {
+                                                    category = cat.id
+                                                    categoryMenu = false
+                                                    categoryFromOcr = false
+                                                },
                                             )
                                         }
                                     }
@@ -336,6 +392,34 @@ fun EditScreen(itemId: String?, defaultCategory: String? = null, onDone: () -> U
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                             }
+                        }
+
+                        // -------------------------------------- 识别出的日期候选
+                        // 显示条件：存在「没被填进任何字段」的候选。只判断 size >= 2 会留死角——
+                        // 唯一候选分数不足 0.7 时既不预填也不显示，识别了等于白识别
+                        val dateCandidatesVisible = dateCandidates.any {
+                            it.isoDate != expireAt && it.isoDate != productionDate
+                        }
+                        if (dateCandidatesVisible) {
+                            DateCandidateList(
+                                candidates = dateCandidates,
+                                productionDate = productionDate,
+                                expireAt = expireAt,
+                                onSelect = { candidate ->
+                                    when (candidate.role) {
+                                        DateRole.expire, DateRole.unknown -> {
+                                            expireAt = candidate.isoDate
+                                            manualExpire = true
+                                        }
+                                        DateRole.produce -> {
+                                            productionDate = candidate.isoDate
+                                            manualExpire = false
+                                        }
+                                    }
+                                    productionFromOcr = false
+                                    expireFromOcr = false
+                                },
+                            )
                         }
 
                         // -------------------------------------- 有效期（嵌套灰底分组）
@@ -357,7 +441,7 @@ fun EditScreen(itemId: String?, defaultCategory: String? = null, onDone: () -> U
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 Column(Modifier.weight(1.6f)) {
-                                    FieldLabel("生产日期", optional = true)
+                                    FieldLabel("生产日期", optional = true, ocrBadge = productionFromOcr)
                                     SelectBox(
                                         text = productionDate.ifEmpty { "选择日期" },
                                         onClick = {
@@ -367,10 +451,13 @@ fun EditScreen(itemId: String?, defaultCategory: String? = null, onDone: () -> U
                                     )
                                 }
                                 Column(Modifier.weight(1.2f)) {
-                                    FieldLabel("有效期", optional = true)
+                                    FieldLabel("有效期", optional = true, ocrBadge = shelfLifeFromOcr)
                                     InputBox(
                                         value = shelfLifeText,
-                                        onValueChange = { shelfLifeText = it.filter { c -> c.isDigit() }.take(5) },
+                                        onValueChange = {
+                                            shelfLifeText = it.filter { c -> c.isDigit() }.take(5)
+                                            shelfLifeFromOcr = false
+                                        },
                                         placeholder = "选填",
                                         fixedHeight = 48.dp,
                                         modifier = Modifier.fillMaxWidth(),
@@ -406,7 +493,7 @@ fun EditScreen(itemId: String?, defaultCategory: String? = null, onDone: () -> U
                                     }
                                 }
                             }
-                            FieldLabel("到期日期")
+                            FieldLabel("到期日期", ocrBadge = expireFromOcr)
                             SelectBox(
                                 text = expireAt.ifEmpty { "选择日期" },
                                 leading = {
@@ -684,9 +771,11 @@ fun EditScreen(itemId: String?, defaultCategory: String? = null, onDone: () -> U
                         val date = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
                         if (datePickerTarget == "production") {
                             productionDate = date.toString()
+                            productionFromOcr = false
                         } else {
                             expireAt = date.toString()
                             manualExpire = true
+                            expireFromOcr = false
                         }
                     }
                     showDatePicker = false
@@ -730,16 +819,147 @@ fun EditScreen(itemId: String?, defaultCategory: String? = null, onDone: () -> U
 
 /** 字段标签：黑字 + 可选的「选填」灰字。 */
 @Composable
-private fun FieldLabel(text: String, optional: Boolean = false) {
+private fun FieldLabel(text: String, optional: Boolean = false, ocrBadge: Boolean = false) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(text, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-        if (optional) {
+        // 已由识别填入时不再标「选填」——两个标签挤在一行会看不清
+        if (optional && !ocrBadge) {
             Spacer(Modifier.width(6.dp))
             Text(
                 "选填",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+        if (ocrBadge) {
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "识别",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer)
+                    .padding(horizontal = 5.dp, vertical = 1.dp),
+            )
+        }
+    }
+}
+
+/**
+ * 品名候选：竖排单选。
+ *
+ * 品名动辄 5–10 个字，用日期的横排 chip 会挤成两行还断在词中间，
+ * 所以这里改成整行可点。
+ */
+@Composable
+private fun NameCandidateList(
+    candidates: List<NameCandidate>,
+    selectedText: String,
+    onSelect: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            "检出 ${candidates.size} 个名称，选一个",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        for (candidate in candidates) {
+            val selected = candidate.text == selectedText
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                else MaterialTheme.colorScheme.surface,
+                border = androidx.compose.foundation.BorderStroke(
+                    if (selected) 1.5.dp else 1.dp,
+                    if (selected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.outline,
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onSelect(candidate.text) },
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        candidate.text,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                        else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (candidate.imageCount >= 2) {
+                        Text(
+                            "多图一致",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 日期候选：横排 chip。
+ *
+ * 一张包装常同时印着生产日期、批号、有效期，让用户点一下比让程序猜更可靠。
+ * 已被采用的候选会高亮，用户手改日期后高亮自然消失。
+ */
+@Composable
+private fun DateCandidateList(
+    candidates: List<DateCandidate>,
+    productionDate: String,
+    expireAt: String,
+    onSelect: (DateCandidate) -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.12f))
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            if (candidates.size == 1) {
+                "照片里检出 1 个日期，点选填入"
+            } else {
+                "照片里检出 ${candidates.size} 个日期，确认哪个是有效期"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            for (candidate in candidates) {
+                val adopted = when (candidate.role) {
+                    DateRole.produce -> candidate.isoDate == productionDate
+                    DateRole.expire, DateRole.unknown -> candidate.isoDate == expireAt
+                }
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (adopted) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.28f)
+                    else MaterialTheme.colorScheme.surface,
+                    border = androidx.compose.foundation.BorderStroke(
+                        if (adopted) 1.5.dp else 1.dp,
+                        if (adopted) MaterialTheme.colorScheme.tertiary
+                        else MaterialTheme.colorScheme.outline,
+                    ),
+                    modifier = Modifier.clickable { onSelect(candidate) },
+                ) {
+                    Text(
+                        "${candidate.isoDate} ${candidate.role.label}",
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    )
+                }
+            }
         }
     }
 }

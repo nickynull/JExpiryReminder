@@ -66,6 +66,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
@@ -83,6 +84,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -137,6 +140,8 @@ class HomeFilterState(keyword: String = "", category: String = "all") {
 fun HomeScreen(
     filter: HomeFilterState,
     onAdd: (defaultCategory: String?) -> Unit,
+    /** 图像识别入口：选图 → 识别 → 带结果进添加页。 */
+    onOcr: (defaultCategory: String?) -> Unit,
     onEdit: (String) -> Unit,
     onSettings: () -> Unit,
     onCategories: () -> Unit,
@@ -274,20 +279,54 @@ fun HomeScreen(
         containerColor = MaterialTheme.colorScheme.background,
         floatingActionButton = {
             if (!selectMode) {
-                FloatingActionButton(
-                    onClick = {
-                        // 「全部分类」= 无筛选，交给新增页用默认分类；其余带上筛选的分类
-                        onAdd(
-                            filter.category.takeIf {
-                                it != HomeFilterState.ALL && store.categoryOf(it) != null
-                            }
-                        )
-                    },
-                    shape = CircleShape,
-                    containerColor = Color(0xFFFFC107),
-                    contentColor = Color(0xFF303133),
+                // 识别放在新增上方，尺寸更小、白底描边：次要入口不抢主动作的重心
+                Column(
+                    // 两个 FAB 尺寸不同，按中线对齐而不是右缘对齐，否则小按钮的轴心会偏
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Icon(Icons.Filled.Add, contentDescription = "新增")
+                    SmallFloatingActionButton(
+                        onClick = {
+                            onOcr(
+                                filter.category.takeIf {
+                                    it != HomeFilterState.ALL && store.categoryOf(it) != null
+                                }
+                            )
+                        },
+                        shape = CircleShape,
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        contentColor = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.border(
+                            1.dp, MaterialTheme.colorScheme.outline, CircleShape,
+                        ),
+                    ) {
+                        Box(
+                            Modifier
+                                .size(22.dp)
+                                .semantics { contentDescription = "图像识别" },
+                        ) {
+                            CameraGlyph(
+                                color = MaterialTheme.colorScheme.primary,
+                                holeColor = MaterialTheme.colorScheme.surface,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
+                    FloatingActionButton(
+                        onClick = {
+                            // 「全部分类」= 无筛选，交给新增页用默认分类；其余带上筛选的分类
+                            onAdd(
+                                filter.category.takeIf {
+                                    it != HomeFilterState.ALL && store.categoryOf(it) != null
+                                }
+                            )
+                        },
+                        shape = CircleShape,
+                        containerColor = Color(0xFFFFC107),
+                        contentColor = Color(0xFF303133),
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = "新增")
+                    }
                 }
             }
         },

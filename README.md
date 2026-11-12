@@ -8,8 +8,8 @@
 
 ```bash
 # 环境变量（本机已具备）：JAVA_HOME=.jdks/microsoft-jdk-17，ANDROID_HOME=AppData/Local/Android/Sdk
-./gradlew assembleDebug        # 产物 app/build/outputs/apk/debug/app-debug.apk（约 10MB）
-./gradlew testDebugUnitTest    # 17 个单元测试
+./gradlew assembleDebug        # 产物 app/build/outputs/apk/debug/app-debug.apk（约 33MB）
+./gradlew testDebugUnitTest    # 61 个单元测试
 ./gradlew installDebug         # 连接设备安装
 ```
 
@@ -17,6 +17,9 @@ Gradle 走腾讯镜像、Maven 走阿里云镜像，无需代理。
 
 ## 功能
 
+- **图像识别录入**：首页「添加」旁的相机按钮 → 拍照 / 相册选图（最多 6 张）→ 确定后本地识别
+  → 带着预填结果进添加页；识别名称、生产日期、保质期、「有效期至」，多个候选由用户点选；
+  **全程离线**（ML Kit bundled 中文模型 + 已移除库带入的网络权限），照片不离开设备
 - **物品管理**：名称 / 分类 / 生产日期 / 有效期（天·月·年，月末自动收敛）/ 到期日
   （可由生产日期+有效期推算，也可手动指定）/ 数量 / 备注；
   新增时默认「食品」，若主页正按某分类筛选则自动预选该分类
@@ -57,17 +60,33 @@ app/src/main/java/com/jimmy/expiryreminder/
 ├── notify/
 │   ├── ReminderService.kt        # 提醒计划计算 + AlarmManager 排程 + 前台兜底
 │   └── Receivers.kt              # AlarmReceiver（触发通知）/ BootReceiver（开机重排）
+├── ocr/                          # 离线识别（纯逻辑，全部可单测）
+│   ├── OcrEngine.kt              # ML Kit 中文识别器封装（单例、串行）
+│   ├── TextNormalizer.kt         # 全角/零宽/中文数字日期归一
+│   ├── DateExtractor.kt          # 日期正则 + 关键词 + 打分 + 合理性校验
+│   ├── NameExtractor.kt          # 版面分析取品名（字号 + 黑名单）
+│   ├── ResultMerger.kt           # 多图聚类与合并
+│   ├── PrefillMapper.kt          # 合并结果 → 预填草稿
+│   └── OcrModels.kt              # OcrLine / 候选 / PrefillDraft
 └── ui/
     ├── Theme.kt / Common.kt      # 主题、异步图片加载
-    ├── HomeScreen.kt             # 列表页
-    ├── EditScreen.kt             # 编辑页
-    ├── CategoryDialog.kt         # 分类管理
+    ├── HomeScreen.kt             # 列表页（含识别入口）
+    ├── PickImagesScreen.kt       # 选图页（拍照 + 相册，≤6）
+    ├── OcrProgressScreen.kt      # 识别进度页
+    ├── EditScreen.kt             # 编辑/新增页（支持预填与候选）
+    ├── ImageViewer.kt            # 全屏图片查看器
+    ├── CategoryScreen.kt         # 分类管理
     └── SettingsScreen.kt         # 设置页
 ```
 
 ## 备注
 
 - minSdk 26（自适应图标需要 v26；如需更低版本需补位图图标）
+- **识别零联网**：ML Kit 用 `com.google.mlkit:text-recognition-chinese`（bundled，模型随 APK）；
+  依赖会把 `INTERNET` / `ACCESS_NETWORK_STATE` 合并进来，已在 manifest 用 `tools:node="remove"` 移除，
+  安装后系统权限列表里没有任何网络权限。不可换成 `play-services-mlkit-text-recognition-chinese`（需联网下模型）
+- **APK 体积**：OCR 的 native 库每个 ABI 7–11MB，已用 `ndk.abiFilters` 只保留 `arm64-v8a` + `armeabi-v7a`，
+  从 56MB 降到 29MB（release）。代价：x86 模拟器装不上，真机不受影响，需要模拟器调试时临时把 ABI 加回来
 - AGP 9.1 内置 Kotlin，构建脚本不单独应用 `org.jetbrains.kotlin.android`
 - 相机拍照经 FileProvider（`cache/camera/`）接收，落库前删除临时文件
 - 图片压缩：等比缩放至最长边 1280，JPEG 质量 85
