@@ -25,7 +25,7 @@ import java.util.zip.ZipOutputStream
 
 class SpacesTest {
 
-    private fun item(spaceId: String = Spaces.DEFAULT) = ExpiryItem(
+    private fun item(spaceId: String = "") = ExpiryItem(
         id = "i1", name = "牛奶", category = "food",
         productionDate = "2026-10-01", shelfLife = 60, shelfLifeUnit = ShelfLifeUnit.day,
         expireAt = "2026-11-30", remindDays = listOf(7, 1), quantity = 1, note = "",
@@ -37,16 +37,16 @@ class SpacesTest {
 
     @Test
     fun `spaceId 往返无损`() {
-        for (id in listOf(Spaces.DEFAULT, "", "sp_abc")) {
+        for (id in listOf("", "default", "sp_abc")) {
             val parsed = ExpiryItem.fromJson(item(id).toJson())!!
             assertEquals(id, parsed.spaceId)
         }
     }
 
     @Test
-    fun `缺 spaceId 的旧数据归默认空间`() {
+    fun `缺 spaceId 的数据为未分配`() {
         val raw = JSONObject().put("id", "i2").put("name", "鸡蛋")
-        assertEquals(Spaces.DEFAULT, ExpiryItem.fromJson(raw)!!.spaceId)
+        assertEquals("", ExpiryItem.fromJson(raw)!!.spaceId)
     }
 
     @Test
@@ -68,16 +68,15 @@ class SpacesTest {
             JSONObject().put("id", "sp_2").put("label", "公司").put("color", "red"),
         )!!.color)
         assertNull(SpaceInfo.fromJson(JSONObject().put("id", "sp_3").put("label", "  ")))
-        assertNull(SpaceInfo.fromJson(JSONObject().put("id", Spaces.DEFAULT).put("label", "重复")))
         assertNull(SpaceInfo.fromJson("not a json"))
     }
 
     @Test
     fun `空间重名判断忽略大小写与空格`() {
-        val list = listOf(SpaceDef(Spaces.DEFAULT, "我的空间", "#409EFF"), SpaceDef("sp_1", "Office", "#67C23A"))
+        val list = listOf(SpaceDef("sp_1", "Office", "#67C23A"), SpaceDef("sp_2", "爸妈家", "#67C23A"))
         assertTrue(list.hasSpaceNameConflict(" office "))
-        assertTrue(list.hasSpaceNameConflict("我的空间"))
-        assertFalse(list.hasSpaceNameConflict("我的空间", exceptId = Spaces.DEFAULT))
+        assertTrue(list.hasSpaceNameConflict("爸妈家"))
+        assertFalse(list.hasSpaceNameConflict("爸妈家", exceptId = "sp_2"))
         assertFalse(list.hasSpaceNameConflict("  "))
         // 「未分配」「全部空间」都是保留字
         assertTrue(list.hasSpaceNameConflict("未分配"))

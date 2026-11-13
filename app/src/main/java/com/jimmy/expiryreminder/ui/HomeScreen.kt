@@ -222,7 +222,7 @@ fun HomeScreen(
     }
 
     // 当前空间被删掉时回落到「全部空间」（未分配是合法状态，不回落）
-    LaunchedEffect(state.spaces, state.spaceLabels) {
+    LaunchedEffect(state.spaces) {
         if (filter.space != Spaces.ALL &&
             filter.space.isNotEmpty() &&
             store.spaceOf(filter.space) == null
@@ -1235,8 +1235,31 @@ private fun ItemRow(
                         }
                         Spacer(Modifier.height(3.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            // 空间：只在归属了空间时显示，名称带空间色；未分配不占位置
+                            val spaceDef = if (showSpace) store.spaceOf(item.spaceId) else null
+                            if (spaceDef != null) {
+                                Box(
+                                    Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(hexColor(spaceDef.color)),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    spaceDef.label,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = hexColor(spaceDef.color),
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    "·",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.width(4.dp))
+                            }
                             val meta = buildList {
-                                if (showSpace) add(store.spaceLabelOf(item.spaceId))
                                 add(store.categoryLabelOf(item.category))
                                 if (item.expireAt.isNotEmpty()) add(item.expireAt)
                                 if (item.quantity > 1) add("×${item.quantity}")

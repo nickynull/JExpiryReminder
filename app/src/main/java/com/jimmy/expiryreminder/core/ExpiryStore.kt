@@ -29,11 +29,9 @@ class ExpiryStore private constructor() {
         val categoryLabels: Map<String, String> = emptyMap(),
         /** 分类展示顺序（只存 id），用户在分类管理里拖动排序后写入。 */
         val order: List<String> = emptyList(),
-        /** 自定义空间（不含内置的默认空间）。 */
+        /** 自定义空间（用户在空间管理里主动创建）。 */
         val spaces: List<SpaceInfo> = emptyList(),
-        /** 内置空间的改名覆盖。 */
-        val spaceLabels: Map<String, String> = emptyMap(),
-        /** 内置空间 /「未分配」/「全部空间」的颜色覆盖。 */
+        /** 「未分配」「全部空间」的颜色覆盖。 */
         val spaceColors: Map<String, String> = emptyMap(),
     )
 
@@ -120,17 +118,11 @@ class ExpiryStore private constructor() {
 
     // ---------------------------------------------------------------- 空间
 
-    /** 内置默认空间 + 自定义空间（内置在前，自定义按创建先后）。 */
+    /** 自定义空间（按创建先后）。没有用户主动创建的空间时返回空列表。 */
     fun spaceOptions(): List<SpaceDef> {
-        val labels = _state.value.spaceLabels
         val colors = _state.value.spaceColors
-        val builtin = Spaces.BUILTIN.map { def ->
-            SpaceDef(def.id, labels[def.id] ?: def.label, colors[def.id] ?: def.color)
-        }
-        return builtin + _state.value.spaces.map { SpaceDef(it.id, it.label, it.color) }
+        return _state.value.spaces.map { SpaceDef(it.id, it.label, colors[it.id] ?: it.color) }
     }
-
-    fun isBuiltinSpace(id: String): Boolean = Spaces.BUILTIN.any { it.id == id }
 
     /** 未分配空间（空串）：物品可以不属于任何空间。 */
     fun isUnassignedSpace(id: String?): Boolean = id.isNullOrEmpty()
@@ -138,19 +130,19 @@ class ExpiryStore private constructor() {
     fun spaceOf(id: String): SpaceDef? = spaceOptions().firstOrNull { it.id == id }
 
     /**
-     * 规整空间 id：空串保留（未分配是合法状态），指向不存在的空间则回落到默认空间，
-     * 避免脏 id 把物品藏起来。
+     * 规整空间 id：空串保留（未分配是合法状态），指向不存在的空间（旧数据/被删空间/他人数据）
+     * 也回落到「未分配」，不再有内置默认空间。
      */
     fun resolveSpaceId(id: String?): String = when {
         id.isNullOrEmpty() -> ""
         spaceOf(id) != null -> id
-        else -> Spaces.DEFAULT
+        else -> ""
     }
 
     fun spaceLabelOf(id: String): String = when {
         id == Spaces.ALL -> Spaces.ALL_LABEL
         isUnassignedSpace(id) -> Spaces.UNASSIGNED_LABEL
-        else -> spaceOf(id)?.label ?: Spaces.BUILTIN.first().label
+        else -> spaceOf(id)?.label ?: Spaces.UNASSIGNED_LABEL
     }
 
     fun spaceColorOf(id: String): String {
@@ -162,14 +154,18 @@ class ExpiryStore private constructor() {
         }
     }
 
-    /** 该空间下未归档的物品（按到期日升序），首页列表用；[Spaces.ALL] = 所有空间 + 未分配。 */
+    /** 该空间下未归档的物品（按到期日升序），首页列表用；[Spaces.ALL] = 所有空间 + 未分配。
+     *  物品的 spaceId 指向未维护的空间（旧数据/被删空间）时视为「未分配」，不写死任何历史 id。 */
     fun itemsInSpace(spaceId: String): List<ExpiryItem> = when (spaceId) {
         Spaces.ALL -> activeItems()
-        else -> items.filter { !it.archived && it.spaceId == spaceId }.sortedBy { it.expireAt }
+        else -> items
+            .filter { !it.archived && resolveSpaceId(it.spaceId) == spaceId }
+            .sortedBy { it.expireAt }
     }
 
     fun itemCountInSpace(spaceId: String): Int =
-        if (spaceId == Spaces.ALL) items.size else items.count { it.spaceId == spaceId }
+        if (spaceId == Spaces.ALL) items.size
+        else items.count { resolveSpaceId(it.spaceId) == spaceId }
 
     // ---------------------------------------------------------------- 物品
 
@@ -287,24 +283,12 @@ class ExpiryStore private constructor() {
                 }
             }
 
-            // 内置空间的改名覆盖：只留内置 id + 非空名称
-            val spaceLabels = LinkedHashMap<String, String>()
-            stored?.optJSONObject("spaceLabels")?.let { labelsJson ->
-                for (key in labelsJson.keys()) {
-                    val value = labelsJson.optStringOrNull(key)?.trim()
-                    if (isBuiltinSpace(key) && !value.isNullOrEmpty()) {
-                        spaceLabels[key] = value
-                    }
-                }
-            }
-
-            // 内置空间 / 未分配 / 全部空间的颜色覆盖：只留已知 id 与合法色值
+            // 空间颜色覆盖：「未分配」「全部空间」的颜色（自定义空间的颜色直接写在 spaces 里）
             val spaceColors = LinkedHashMap<String, String>()
             stored?.optJSONObject("spaceColors")?.let { colorJson ->
                 for (key in colorJson.keys()) {
                     val value = colorJson.optStringOrNull(key)
-                    val known = isBuiltinSpace(key) ||
-                        key == Spaces.ALL || key == Spaces.UNASSIGNED_KEY
+                    val known = key == Spaces.ALL || key == Spaces.UNASSIGNED_KEY
                     if (known && value != null && isHexColor(value)) spaceColors[key] = value
                 }
             }
@@ -317,22 +301,13 @@ class ExpiryStore private constructor() {
                 categoryLabels = labels,
                 order = order.toList(),
                 spaces = spaces.values.toList(),
-                spaceLabels = spaceLabels,
                 spaceColors = spaceColors,
             )
 
-            // v6 迁移：物品的 spaceId 指向不存在的空间（旧数据/被删空间/他人数据）时归到默认空间；
-            // 空串是「未分配」，属于合法状态，原样保留
-            val knownSpaces = spaceOptions().map { it.id }.toSet()
-            val spaceFixed = _state.value.items.map { item ->
-                if (item.spaceId.isEmpty() || item.spaceId in knownSpaces) item
-                else item.copy(spaceId = Spaces.DEFAULT)
-            }
-            if (spaceFixed != _state.value.items) {
-                _state.value = _state.value.copy(items = spaceFixed)
-                migrated = true
-            }
+            // 兼容策略：不改写数据。物品 spaceId 指向未维护的空间（旧数据/被删空间）时，
+            // 由 itemsInSpace / itemCountInSpace 在查询时用 resolveSpaceId 归一为「未分配」
 
+            // v3 图片迁移改动了数据才落盘（既有逻辑，仅转换存储形式，不删数据）
             if (migrated) persistLocked(context)
         }
     }
@@ -352,7 +327,6 @@ class ExpiryStore private constructor() {
             categoryLabels = _state.value.categoryLabels,
             categoryOrder = categoryOptions().map { it.id },
             spaces = _state.value.spaces,
-            spaceLabels = _state.value.spaceLabels,
             spaceColors = _state.value.spaceColors,
         )
         file.writeText(payload.toJson().toString(2))
@@ -686,11 +660,7 @@ class ExpiryStore private constructor() {
         return space
     }
 
-    /** 内置空间的默认名称（改名后可恢复）。 */
-    fun defaultSpaceLabel(id: String): String? =
-        Spaces.BUILTIN.firstOrNull { it.id == id }?.label
-
-    /** 空间改名：自定义空间改自身，内置空间记进覆盖表。 */
+    /** 空间改名：改自身。 */
     suspend fun renameSpace(context: Context, id: String, label: String): SpaceNameError? {
         val name = label.trim()
         if (name.isEmpty()) return SpaceNameError.empty
@@ -700,26 +670,19 @@ class ExpiryStore private constructor() {
                 return SpaceNameError.duplicate
             }
             val index = current.spaces.indexOfFirst { it.id == id }
-            if (index >= 0) {
-                val old = current.spaces[index]
-                if (old.label == name) return null
-                _state.value = current.copy(
-                    spaces = current.spaces.toMutableList().also { it[index] = old.copy(label = name) },
-                )
-            } else if (isBuiltinSpace(id)) {
-                val default = defaultSpaceLabel(id)
-                val next = if (name == default) current.spaceLabels - id
-                else current.spaceLabels + (id to name)
-                if (next == current.spaceLabels) return null
-                _state.value = current.copy(spaceLabels = next)
-            } else return null
+            if (index < 0) return null
+            val old = current.spaces[index]
+            if (old.label == name) return null
+            _state.value = current.copy(
+                spaces = current.spaces.toMutableList().also { it[index] = old.copy(label = name) },
+            )
             persistLocked(context)
         }
         return null
     }
 
     /**
-     * 换色：自定义空间改自身颜色；内置空间、「未分配」、「全部空间」记进颜色覆盖表。
+     * 换色：「未分配」「全部空间」记进颜色覆盖表，自定义空间改自身颜色。
      * [id] 传空串表示「未分配」。
      */
     suspend fun setSpaceColor(context: Context, id: String, color: String) {
@@ -737,7 +700,7 @@ class ExpiryStore private constructor() {
                 persistLocked(context)
                 return
             }
-            val overrideable = key == Spaces.ALL || key == Spaces.UNASSIGNED_KEY || isBuiltinSpace(id)
+            val overrideable = key == Spaces.ALL || key == Spaces.UNASSIGNED_KEY
             if (!overrideable) return
             if (current.spaceColors[key] == color) return
             _state.value = current.copy(spaceColors = current.spaceColors + (key to color))
@@ -746,11 +709,10 @@ class ExpiryStore private constructor() {
     }
 
     /**
-     * 删除空间：内置默认空间、或空间下还有物品（含已归档）时拒绝，返回 false。
+     * 删除空间：空间下还有物品（含已归档）时拒绝，返回 false。
      * 物品不会因为删空间被连带删除——必须先转移或删除，避免误伤数据。
      */
     suspend fun removeSpace(context: Context, id: String): Boolean {
-        if (isBuiltinSpace(id)) return false
         var ok = false
         mutex.withLock {
             if (_state.value.items.any { it.spaceId == id }) return false

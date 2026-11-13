@@ -61,7 +61,7 @@ import com.jimmy.expiryreminder.core.Spaces
 import kotlinx.coroutines.launch
 
 /**
- * 空间管理：默认空间（不可删）+ 自定义空间。
+ * 空间管理：用户主动创建的自定义空间。
  *
  * 交互跟分类管理页保持一致：点整行改名、点左侧圆点换色、右侧 × 删除。
  * 不做拖动排序——空间一般只有几个，按创建顺序足够用。
@@ -131,9 +131,6 @@ fun SpaceScreen(onBack: () -> Unit) {
                     SpaceRow(
                         space = space,
                         usage = store.itemCountInSpace(space.id),
-                        builtin = store.isBuiltinSpace(space.id),
-                        renamedDefault = store.defaultSpaceLabel(space.id)
-                            ?.takeIf { it != space.label },
                         onPickColor = { colorFor = space },
                         onRename = { renameFor = space },
                         onDelete = {
@@ -234,7 +231,6 @@ fun SpaceScreen(onBack: () -> Unit) {
     renameFor?.let { space ->
         RenameSpaceDialog(
             space = space,
-            defaultLabel = store.defaultSpaceLabel(space.id),
             onConfirm = { name ->
                 scope.launch {
                     val error = store.renameSpace(context, space.id, name)
@@ -242,14 +238,6 @@ fun SpaceScreen(onBack: () -> Unit) {
                         SpaceNameError.empty -> Toast.makeText(context, "名称不能为空", Toast.LENGTH_SHORT).show()
                         SpaceNameError.duplicate -> Toast.makeText(context, "空间名已存在", Toast.LENGTH_SHORT).show()
                         null -> renameFor = null
-                    }
-                }
-            },
-            onRestoreDefault = {
-                store.defaultSpaceLabel(space.id)?.let { default ->
-                    scope.launch {
-                        store.renameSpace(context, space.id, default)
-                        renameFor = null
                     }
                 }
             },
@@ -338,8 +326,6 @@ private fun PseudoSpaceRow(
 private fun SpaceRow(
     space: SpaceDef,
     usage: Int,
-    builtin: Boolean,
-    renamedDefault: String?,
     onPickColor: (() -> Unit)?,
     onRename: () -> Unit,
     onDelete: () -> Unit,
@@ -367,59 +353,38 @@ private fun SpaceRow(
                     ),
             )
             Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    space.label,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (renamedDefault != null) {
-                    Text(
-                        "默认：$renamedDefault",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
+            Text(
+                space.label,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
             Text(
                 "$usage 件",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.width(6.dp))
-            if (builtin) {
-                Text(
-                    "默认",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(end = 4.dp),
+            IconButton(onClick = onDelete) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = if (usage > 0) "空间下有物品，不能删除" else "删除空间",
+                    tint = if (usage > 0) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                    else MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp),
                 )
-            } else {
-                IconButton(onClick = onDelete) {
-                    Icon(
-                        Icons.Filled.Close,
-                        contentDescription = if (usage > 0) "空间下有物品，不能删除" else "删除空间",
-                        tint = if (usage > 0) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
-                        else MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
             }
         }
     }
 }
 
-/** 空间改名：预填原名并全选，方便直接覆盖；内置空间改名后可一键恢复默认。 */
+/** 空间改名：预填原名并全选，方便直接覆盖。 */
 @Composable
 private fun RenameSpaceDialog(
     space: SpaceDef,
-    defaultLabel: String?,
     onConfirm: (String) -> Unit,
-    onRestoreDefault: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var value by remember(space.id) {
@@ -444,10 +409,6 @@ private fun RenameSpaceDialog(
                     showClear = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                if (defaultLabel != null && defaultLabel != space.label) {
-                    Spacer(Modifier.height(8.dp))
-                    TextButton(onClick = onRestoreDefault) { Text("恢复默认名称「$defaultLabel」") }
-                }
             }
         },
         confirmButton = {

@@ -112,10 +112,7 @@ object Categories {
 data class SpaceDef(val id: String, val label: String, val color: String)
 
 object Spaces {
-    /** 内置默认空间：旧数据全部归到这里，不可删除。 */
-    const val DEFAULT = "default"
-
-    /** 空串 spaceId = 物品不归属任何空间，界面上显示为「未分配」。 */
+    /** 空串 spaceId = 物品不归属任何空间，界面上显示为「未分配」。默认状态就是它，只有用户主动维护空间才会分配。 */
     const val UNASSIGNED_LABEL = "未分配"
     const val UNASSIGNED_COLOR = "#909399"
     /** 「未分配」的颜色覆盖在 data.json 里的键（空串当 JSON 键可读性太差）。 */
@@ -131,8 +128,6 @@ object Spaces {
 
     /** 颜色覆盖表用的键：未分配用 [UNASSIGNED_KEY]，其余（含「全部空间」）直接用 id。 */
     fun colorKeyOf(id: String): String = id.ifEmpty { UNASSIGNED_KEY }
-
-    val BUILTIN = listOf(SpaceDef(DEFAULT, "我的空间", "#409EFF"))
 
     /** 自定义空间取色顺序。 */
     val CUSTOM_COLORS = listOf(
@@ -171,7 +166,7 @@ data class SpaceInfo(
             if (raw !is JSONObject) return null
             // 内置默认空间与「全部空间」虚拟 id 都不允许出现在自定义空间里
             val id = raw.optStringOrNull("id")
-                ?.takeIf { it != Spaces.DEFAULT && it != Spaces.ALL }
+                ?.takeIf { it != Spaces.ALL }
                 ?: return null
             val label = raw.optStringOrNull("label")?.trim() ?: return null
             if (label.isEmpty()) return null
@@ -332,8 +327,8 @@ data class ExpiryItem(
     val archived: Boolean,
     val createdAt: String,
     val updatedAt: String,
-    /** 归属空间；缺省（v5 及更早的数据）归入 [Spaces.DEFAULT]。 */
-    val spaceId: String = Spaces.DEFAULT,
+    /** 归属空间；缺省 = 未分配。只有用户主动维护了空间，才会在这里写入空间 id。 */
+    val spaceId: String = "",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
@@ -388,12 +383,8 @@ data class ExpiryItem(
                 archived = raw.optBoolean("archived", false),
                 createdAt = raw.optStringOrNull("createdAt") ?: now,
                 updatedAt = raw.optStringOrNull("updatedAt") ?: now,
-                // 字段缺失 = v5 之前的数据，归默认空间；显式空串 = 用户主动选了「不归属空间」
-                spaceId = if (raw.has("spaceId") && !raw.isNull("spaceId")) {
-                    raw.optStringOrNull("spaceId") ?: ""
-                } else {
-                    Spaces.DEFAULT
-                },
+                // 字段缺失或显式空串都是「未分配」，默认不归属任何空间
+                spaceId = raw.optStringOrNull("spaceId") ?: "",
             )
         }
 
@@ -415,12 +406,10 @@ data class ExpiryData(
     val categoryLabels: Map<String, String> = emptyMap(),
     /** 分类展示顺序（只存 id）；为空表示按「内置在前、自定义按创建先后」的默认顺序。 */
     val categoryOrder: List<String> = emptyList(),
-    /** 自定义空间（不含内置的 [Spaces.DEFAULT]）。 */
+    /** 自定义空间。 */
     val spaces: List<SpaceInfo> = emptyList(),
-    /** 内置空间的改名覆盖（自定义空间的名称直接写在 [spaces] 里）。 */
-    val spaceLabels: Map<String, String> = emptyMap(),
     /**
-     * 空间颜色覆盖：内置空间、「未分配」、「全部空间」的颜色。
+     * 「未分配」「全部空间」的颜色覆盖。
      * 自定义空间的颜色直接写在 [spaces] 里，不进这张表。
      */
     val spaceColors: Map<String, String> = emptyMap(),
@@ -430,8 +419,6 @@ data class ExpiryData(
         for ((k, v) in categoryColors) colors.put(k, v)
         val labels = JSONObject()
         for ((k, v) in categoryLabels) labels.put(k, v)
-        val spaceLabelJson = JSONObject()
-        for ((k, v) in spaceLabels) spaceLabelJson.put(k, v)
         val spaceColorJson = JSONObject()
         for ((k, v) in spaceColors) spaceColorJson.put(k, v)
         return JSONObject()
@@ -442,13 +429,12 @@ data class ExpiryData(
             .put("categoryLabels", labels)
             .put("categoryOrder", JSONArray(categoryOrder))
             .put("spaces", JSONArray(spaces.map { it.toJson() }))
-            .put("spaceLabels", spaceLabelJson)
             .put("spaceColors", spaceColorJson)
     }
 }
 
-/** data.json 当前版本：v4 图片改文件相对路径；v5 分类颜色可编辑；v6 物品归属空间；v7 空间颜色可编辑。 */
-const val DATA_VERSION = 7
+/** data.json 当前版本：v4 图片改文件相对路径；v5 分类颜色可编辑；v6 物品归属空间；v7 空间颜色可编辑；v8 去掉内置默认空间（未维护的空间读取时视为未分配，不改写历史数据）。 */
+const val DATA_VERSION = 8
 
 // ---------------------------------------------------------------- 状态
 
