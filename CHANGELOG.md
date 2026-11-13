@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/nickynull/JExpiryReminder/compare/v1.6.0...v1.7.0) (2026-11-13)
+
+
+### Features
+
+* 去掉内置默认空间，物品默认无空间归属 ([db1ebb5](https://github.com/nickynull/JExpiryReminder/commit/db1ebb5249cebc738ecfcf478c0b6b58eda90761))
+
 ## [1.6.0](https://github.com/nickynull/JExpiryReminder/compare/v1.5.0...v1.6.0) (2026-11-12)
 
 
