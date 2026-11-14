@@ -174,6 +174,7 @@ fun HomeScreen(
     val notifyEnabled by settings.notifyEnabled.collectAsStateWithLifecycle()
     val notifyTime by settings.notifyTime.collectAsStateWithLifecycle()
     val useAlarmClock by settings.useAlarmClock.collectAsStateWithLifecycle()
+    val statCards by settings.statCards.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     var selectMode by remember { mutableStateOf(false) }
@@ -542,31 +543,25 @@ fun HomeScreen(
             }
 
             Column(Modifier.padding(horizontal = 16.dp)) {
-                // ------------------------------------------ 统计卡
+                // ------------------------------------------ 统计卡（数量与种类由设置决定）
                 Row(
                     Modifier
                         .fillMaxWidth()
                         .padding(top = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    StatCard(
-                        count = filtered.size,
-                        label = "全部",
-                        accent = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f),
-                    )
-                    StatCard(
-                        count = countOf(grouped, ExpiryStatus.soon),
-                        label = "7天内",
-                        accent = hexColor(ExpiryStatus.soon.color),
-                        modifier = Modifier.weight(1f),
-                    )
-                    StatCard(
-                        count = countOf(grouped, ExpiryStatus.expired),
-                        label = "已过期",
-                        accent = hexColor(ExpiryStatus.expired.color),
-                        modifier = Modifier.weight(1f),
-                    )
+                    // 4 张及以上收窄内边距和字号，保证 5 张也能一行放得下
+                    val dense = statCards.size >= 4
+                    for (card in statCards) {
+                        StatCard(
+                            count = card.status?.let { countOf(grouped, it) } ?: filtered.size,
+                            label = card.label,
+                            accent = card.status?.let { hexColor(it.color) }
+                                ?: MaterialTheme.colorScheme.onSurface,
+                            dense = dense,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
 
                 // ------------------------------------------ 分类切换器 + 分类/多选
@@ -1097,9 +1092,15 @@ private fun CountBadge(count: Int) {
     )
 }
 
-/** 参考稿统计卡：白底、左对齐彩色大数字 + 灰色标签。 */
+/** 参考稿统计卡：白底、左对齐彩色大数字 + 灰色标签。[dense] 用于 4 张以上时收窄，避免一行放不下。 */
 @Composable
-private fun StatCard(count: Int, label: String, accent: Color, modifier: Modifier = Modifier) {
+private fun StatCard(
+    count: Int,
+    label: String,
+    accent: Color,
+    dense: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
     Card(
         modifier = modifier,
         shape = RoundedCornerShape(12.dp),
@@ -1109,18 +1110,26 @@ private fun StatCard(count: Int, label: String, accent: Color, modifier: Modifie
             1.dp, MaterialTheme.colorScheme.outline,
         ),
     ) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+        Column(
+            Modifier.padding(
+                horizontal = if (dense) 8.dp else 14.dp,
+                vertical = if (dense) 10.dp else 12.dp,
+            )
+        ) {
             Text(
                 "$count",
-                style = MaterialTheme.typography.headlineMedium,
+                style = if (dense) MaterialTheme.typography.titleLarge
+                else MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
                 color = accent,
+                maxLines = 1,
             )
             Spacer(Modifier.height(2.dp))
             Text(
                 label,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
             )
         }
     }

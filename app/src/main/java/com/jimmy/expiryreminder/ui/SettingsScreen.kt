@@ -7,22 +7,28 @@ import android.net.Uri
 import android.provider.Settings as AndroidSettings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -61,6 +67,7 @@ import com.jimmy.expiryreminder.BuildConfig
 import com.jimmy.expiryreminder.core.Backup
 import com.jimmy.expiryreminder.core.ExpiryStore
 import com.jimmy.expiryreminder.core.SettingsStore
+import com.jimmy.expiryreminder.core.StatCard
 import com.jimmy.expiryreminder.notify.ReminderService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -78,10 +85,12 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
     val notifyEnabled by settings.notifyEnabled.collectAsStateWithLifecycle()
     val notifyTime by settings.notifyTime.collectAsStateWithLifecycle()
     val useAlarmClock by settings.useAlarmClock.collectAsStateWithLifecycle()
+    val statCards by settings.statCards.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
     var showTimePicker by remember { mutableStateOf(false) }
+    var showStatCards by remember { mutableStateOf(false) }
     var pendingImport by remember { mutableStateOf<Uri?>(null) }
     var showClearConfirm by remember { mutableStateOf(false) }
     var showRomHelp by remember { mutableStateOf(false) }
@@ -349,6 +358,15 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
                 }
             }
 
+            ListItem(
+                headlineContent = { Text("主页统计卡") },
+                supportingContent = { Text(statCards.joinToString(" / ") { it.label }) },
+                modifier = Modifier.clickable { showStatCards = true },
+                trailingContent = {
+                    TextButton(onClick = { showStatCards = true }) { Text("选择") }
+                },
+            )
+
             HorizontalDivider()
             SectionTitle("跨设备")
 
@@ -420,6 +438,57 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
                 },
             )
         }
+    }
+
+    if (showStatCards) {
+        // 勾选立即生效并保存；取消最后一张时忽略这次点击，保证主页至少有一张卡
+        AlertDialog(
+            onDismissRequest = { showStatCards = false },
+            title = { Text("主页统计卡") },
+            text = {
+                Column {
+                    for (card in StatCard.entries) {
+                        val checked = card in statCards
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(MaterialTheme.shapes.small)
+                                .clickable {
+                                    val next = if (checked) statCards - card else statCards + card
+                                    if (next.isNotEmpty()) {
+                                        settings.update(context, statCards = next)
+                                    }
+                                }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(checked = checked, onCheckedChange = null)
+                            Spacer(Modifier.width(6.dp))
+                            Box(
+                                Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        card.status?.let { hexColor(it.color) }
+                                            ?: MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(card.label, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "按此顺序显示在主页顶部，至少保留一张。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showStatCards = false }) { Text("完成") }
+            },
+        )
     }
 
     if (showTimePicker) {
