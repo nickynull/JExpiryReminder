@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,6 +31,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -69,9 +74,12 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.nativeCanvas
@@ -80,6 +88,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -458,67 +469,67 @@ fun EditScreen(
                             )
                         }
 
-                        // -------------------------------------- 归属空间
-                        FieldLabel("空间")
-                        Box {
-                            SelectBox(
-                                text = store.spaceLabelOf(spaceId),
-                                leading = {
-                                    Box(
-                                        Modifier
-                                            .size(10.dp)
-                                            .background(hexColor(store.spaceColorOf(spaceId)), CircleShape),
-                                    )
-                                },
-                                onClick = { spaceMenu = true },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            DropdownMenu(
-                                expanded = spaceMenu,
-                                onDismissRequest = { spaceMenu = false },
-                                shape = RoundedCornerShape(12.dp),
-                            ) {
-                                // 空间可以为空：不选任何空间时归入「未分配」
-                                DropdownMenuItem(
-                                    text = { Text("不归属空间") },
-                                    leadingIcon = {
-                                        Box(
-                                            Modifier.size(10.dp).background(
-                                                hexColor(com.jimmy.expiryreminder.core.Spaces.UNASSIGNED_COLOR),
-                                                CircleShape,
-                                            )
-                                        )
-                                    },
-                                    onClick = {
-                                        spaceId = ""
-                                        spaceMenu = false
-                                    },
-                                )
-                                for (space in store.spaceOptions()) {
-                                    DropdownMenuItem(
-                                        text = { Text(space.label) },
-                                        leadingIcon = {
-                                            Box(
-                                                Modifier.size(10.dp).background(
-                                                    hexColor(space.color), CircleShape,
-                                                )
-                                            )
-                                        },
-                                        onClick = {
-                                            spaceId = space.id
-                                            spaceMenu = false
-                                        },
-                                    )
-                                }
-                            }
-                        }
-
-                        // -------------------------------------- 分类 + 数量
+                        // -------------------------------------- 空间 + 分类
                         Row(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            Column(Modifier.weight(1.4f)) {
+                            Column(Modifier.weight(1f)) {
+                                FieldLabel("空间")
+                                Box {
+                                    SelectBox(
+                                        text = store.spaceLabelOf(spaceId),
+                                        leading = {
+                                            Box(
+                                                Modifier
+                                                    .size(10.dp)
+                                                    .background(hexColor(store.spaceColorOf(spaceId)), CircleShape),
+                                            )
+                                        },
+                                        onClick = { spaceMenu = true },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                    DropdownMenu(
+                                        expanded = spaceMenu,
+                                        onDismissRequest = { spaceMenu = false },
+                                        shape = RoundedCornerShape(12.dp),
+                                    ) {
+                                        // 空间可以为空：不选任何空间时归入「未分配」
+                                        DropdownMenuItem(
+                                            text = { Text("不归属空间") },
+                                            leadingIcon = {
+                                                Box(
+                                                    Modifier.size(10.dp).background(
+                                                        hexColor(com.jimmy.expiryreminder.core.Spaces.UNASSIGNED_COLOR),
+                                                        CircleShape,
+                                                    )
+                                                )
+                                            },
+                                            onClick = {
+                                                spaceId = ""
+                                                spaceMenu = false
+                                            },
+                                        )
+                                        for (space in store.spaceOptions()) {
+                                            DropdownMenuItem(
+                                                text = { Text(space.label) },
+                                                leadingIcon = {
+                                                    Box(
+                                                        Modifier.size(10.dp).background(
+                                                            hexColor(space.color), CircleShape,
+                                                        )
+                                                    )
+                                                },
+                                                onClick = {
+                                                    spaceId = space.id
+                                                    spaceMenu = false
+                                                },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            Column(Modifier.weight(1f)) {
                                 FieldLabel("分类", ocrBadge = categoryFromOcr)
                                 Box {
                                     SelectBox(
@@ -561,14 +572,6 @@ fun EditScreen(
                                     }
                                 }
                             }
-                            Column(Modifier.weight(1f)) {
-                                FieldLabel("数量")
-                                QuantityStepper(
-                                    value = quantity,
-                                    onChange = { quantity = it },
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
-                            }
                         }
 
                         // -------------------------------------- 识别出的日期候选
@@ -599,124 +602,136 @@ fun EditScreen(
                             )
                         }
 
-                        // -------------------------------------- 有效期（嵌套灰底分组）
-                        Column(
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
-                                .padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        // -------------------------------------- 生产日期 / 有效期 / 单位
+                        // 外层按左右两半分：生产日期占左半（与到期日期对齐），
+                        // 右半内部再按 0.55:0.45 分给有效期与单位，保证有效期列与分类/数量列起始对齐
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            Text(
-                                "有效期",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                Column(Modifier.weight(1.6f)) {
-                                    FieldLabel("生产日期", optional = true, ocrBadge = productionFromOcr)
-                                    SelectBox(
-                                        text = productionDate.ifEmpty { "选择日期" },
-                                        onClick = {
-                                            datePickerTarget = "production"
-                                            pickerDate = runCatching { LocalDate.parse(productionDate) }
-                                                .getOrNull() ?: LocalDate.now()
-                                            showDatePicker = true
-                                        },
-                                        modifier = Modifier.fillMaxWidth(),
-                                    )
-                                }
-                                Column(Modifier.weight(1.2f)) {
-                                    FieldLabel("有效期", optional = true, ocrBadge = shelfLifeFromOcr)
-                                    InputBox(
-                                        value = shelfLifeText,
-                                        onValueChange = {
-                                            shelfLifeText = it.filter { c -> c.isDigit() }.take(5)
-                                            shelfLifeFromOcr = false
-                                        },
-                                        placeholder = "选填",
-                                        fixedHeight = 48.dp,
-                                        modifier = Modifier.fillMaxWidth(),
-                                        showClear = true,
-                                    )
-                                }
-                                Column(Modifier.weight(1f)) {
-                                    FieldLabel("单位")
-                                    Box {
-                                        SelectBox(
-                                            text = unit.label,
-                                            trailing = {
-                                                Icon(
-                                                    Icons.Filled.KeyboardArrowDown, contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    modifier = Modifier.size(16.dp),
-                                                )
+                            Column(Modifier.weight(1f)) {
+                                FieldLabel("生产日期", optional = true, ocrBadge = productionFromOcr)
+                                SelectBox(
+                                    text = productionDate.ifEmpty { "选择日期" },
+                                    onClick = {
+                                        datePickerTarget = "production"
+                                        pickerDate = runCatching { LocalDate.parse(productionDate) }
+                                            .getOrNull() ?: LocalDate.now()
+                                        showDatePicker = true
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                            Column(Modifier.weight(1f)) {
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Column(Modifier.weight(0.55f)) {
+                                        FieldLabel("有效期", optional = true, ocrBadge = shelfLifeFromOcr)
+                                        InputBox(
+                                            value = shelfLifeText,
+                                            onValueChange = {
+                                                shelfLifeText = it.filter { c -> c.isDigit() }.take(5)
+                                                shelfLifeFromOcr = false
                                             },
-                                            onClick = { unitMenu = true },
+                                            placeholder = "选填",
+                                            fixedHeight = 48.dp,
                                             modifier = Modifier.fillMaxWidth(),
+                                            showClear = true,
+                                            keyboardType = KeyboardType.Number,
                                         )
-                                        DropdownMenu(
-                                            expanded = unitMenu,
-                                            onDismissRequest = { unitMenu = false },
-                                            shape = RoundedCornerShape(12.dp),
-                                        ) {
-                                            for (u in ShelfLifeUnit.entries) {
-                                                DropdownMenuItem(
-                                                    text = { Text(u.label) },
-                                                    onClick = { unit = u; unitMenu = false },
-                                                )
+                                    }
+                                    Column(Modifier.weight(0.45f)) {
+                                        FieldLabel("单位")
+                                        Box {
+                                            SelectBox(
+                                                text = unit.label,
+                                                trailing = {
+                                                    Icon(
+                                                        Icons.Filled.KeyboardArrowDown, contentDescription = null,
+                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        modifier = Modifier.size(16.dp),
+                                                    )
+                                                },
+                                                onClick = { unitMenu = true },
+                                                modifier = Modifier.fillMaxWidth(),
+                                            )
+                                            DropdownMenu(
+                                                expanded = unitMenu,
+                                                onDismissRequest = { unitMenu = false },
+                                                shape = RoundedCornerShape(12.dp),
+                                            ) {
+                                                for (u in ShelfLifeUnit.entries) {
+                                                    DropdownMenuItem(
+                                                        text = { Text(u.label) },
+                                                        onClick = { unit = u; unitMenu = false },
+                                                    )
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
-                            FieldLabel("到期日期", ocrBadge = expireFromOcr)
-                            SelectBox(
-                                text = expireAt.ifEmpty { "选择日期" },
-                                leading = {
-                                    Icon(
-                                        Icons.Filled.DateRange, contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(16.dp),
-                                    )
-                                },
-                                onClick = {
-                                    datePickerTarget = "expire"
-                                    pickerDate = runCatching { LocalDate.parse(expireAt) }
-                                        .getOrNull() ?: LocalDate.now()
-                                    showDatePicker = true
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    when {
-                                        expireAt.isEmpty() -> "由生产日期与有效期推算，也可手动指定"
-                                        else -> Dates.describeRemaining(expireAt)
+                        }
+                        // -------------------------------------- 到期日期 + 数量
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                FieldLabel("到期日期", ocrBadge = expireFromOcr)
+                                SelectBox(
+                                    text = expireAt.ifEmpty { "选择日期" },
+                                    leading = {
+                                        Icon(
+                                            Icons.Filled.DateRange, contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp),
+                                        )
                                     },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    onClick = {
+                                        datePickerTarget = "expire"
+                                        pickerDate = runCatching { LocalDate.parse(expireAt) }
+                                            .getOrNull() ?: LocalDate.now()
+                                        showDatePicker = true
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
                                 )
-                                if (manualExpire && productionDate.isNotEmpty() &&
-                                    (shelfLifeText.toIntOrNull() ?: 0) > 0
-                                ) {
-                                    Spacer(Modifier.weight(1f))
-                                    Text(
-                                        "恢复自动推算",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.clickable {
-                                            manualExpire = false
-                                            val amount = shelfLifeText.toIntOrNull() ?: 0
-                                            expireAt =
-                                                ExpiryCalc.computeExpireAt(productionDate, amount, unit)
-                                        },
-                                    )
-                                }
+                            }
+                            Column(Modifier.weight(1f)) {
+                                FieldLabel("数量")
+                                QuantityStepper(
+                                    value = quantity,
+                                    onChange = { quantity = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                when {
+                                    expireAt.isEmpty() -> "由生产日期与有效期推算，也可手动指定"
+                                    else -> Dates.describeRemaining(expireAt)
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            if (manualExpire && productionDate.isNotEmpty() &&
+                                (shelfLifeText.toIntOrNull() ?: 0) > 0
+                            ) {
+                                Spacer(Modifier.weight(1f))
+                                Text(
+                                    "恢复自动推算",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.clickable {
+                                        manualExpire = false
+                                        val amount = shelfLifeText.toIntOrNull() ?: 0
+                                        expireAt =
+                                            ExpiryCalc.computeExpireAt(productionDate, amount, unit)
+                                    },
+                                )
                             }
                         }
 
@@ -950,7 +965,7 @@ fun EditScreen(
                         shelfLifeUnit = unit,
                         expireAt = expireAt,
                         remindDays = remindDays,
-                        quantity = quantity,
+                        quantity = quantity.coerceIn(1, MAX_QUANTITY),
                         note = note.trim(),
                         images = images,
                         notifiedKeys = existing?.notifiedKeys ?: emptyList(),
@@ -1667,9 +1682,50 @@ private fun SelectBox(
     }
 }
 
-/** 数量步进器：− 数字 + 的紧凑横排。 */
+/** 数量上限：与步进器「+」的禁用阈值、保存时的兜底归一保持同一处定义。 */
+private const val MAX_QUANTITY = 9999
+
+/**
+ * 数量步进器：− [数字输入框] + 的紧凑横排。
+ *
+ * 中间是真输入框（数字键盘），既能点 +/− 微调，也能直接敲数字。
+ * 编辑态用本地字符串保存、允许中途为空，失焦或按「完成」时统一归一：
+ * 空/0 → 1，超过 [MAX_QUANTITY] → 截到上限。
+ *
+ * 注意：点 +/− 时输入框通常仍持有焦点，[LaunchedEffect] 里的「未聚焦才回填」不会生效，
+ * 所以 ± 必须自己调 [apply] 同步文本框——否则值变了、数字不变，看着像按钮失灵。
+ */
 @Composable
 private fun QuantityStepper(value: Int, onChange: (Int) -> Unit, modifier: Modifier = Modifier) {
+    val focusManager = LocalFocusManager.current
+    val qtyFocus = remember { FocusRequester() }
+    val qtyInteraction = remember { MutableInteractionSource() }
+    // 与外部 Int 解耦的编辑文本：输入中途「0」「空」都是合法中间态，别被强行回填
+    var text by remember { mutableStateOf(value.toString()) }
+    var focused by remember { mutableStateOf(false) }
+
+    // 外部值变化（载入旧数据、OCR 预填等）且用户不在输入时，同步回文本框
+    LaunchedEffect(value) {
+        if (!focused && text.toIntOrNull() != value) text = value.toString()
+    }
+
+    /** 当前显示值：以输入框里的内容为准（空则退回已生效值），并夹到合法区间。 */
+    fun shownValue(): Int = text.toIntOrNull()?.coerceIn(1, MAX_QUANTITY) ?: value
+
+    /** 写值并立刻同步文本框（± 的入口）。 */
+    fun apply(newValue: Int) {
+        val v = newValue.coerceIn(1, MAX_QUANTITY)
+        text = v.toString()
+        if (v != value) onChange(v)
+    }
+
+    /** 失焦 / 按「完成」时归一：空或 0 视为 1。 */
+    fun commit() {
+        val parsed = (text.toIntOrNull() ?: 0).coerceIn(1, MAX_QUANTITY)
+        text = parsed.toString()
+        if (parsed != value) onChange(parsed)
+    }
+
     Surface(
         shape = RoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -1677,11 +1733,54 @@ private fun QuantityStepper(value: Int, onChange: (Int) -> Unit, modifier: Modif
         modifier = modifier.height(48.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            StepCell("−", enabled = value > 1) { onChange(value - 1) }
-            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                Text("$value", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+            // 边界按「看到的值」判断，输入框里的中间态也一并照顾到
+            StepCell("−", enabled = shownValue() > 1) { apply(shownValue() - 1) }
+            // 中间整列都可点（不靠 24dp 的文字高度当命中区），点了就把焦点给输入框
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clickable(
+                        interactionSource = qtyInteraction,
+                        indication = null,
+                    ) { qtyFocus.requestFocus() },
+                contentAlignment = Alignment.Center,
+            ) {
+                BasicTextField(
+                    value = text,
+                    onValueChange = { raw ->
+                        // 只收数字、最多 4 位；合法值实时写回，空/0 留给 commit() 归一
+                        val digits = raw.filter { c -> c.isDigit() }.take(4)
+                        text = digits
+                        val parsed = digits.toIntOrNull()
+                        if (parsed != null && parsed >= 1 && parsed != value) onChange(parsed)
+                    },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Medium,
+                        textAlign = TextAlign.Center,
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = {
+                        commit()
+                        focusManager.clearFocus()
+                    }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(qtyFocus)
+                        .onFocusChanged {
+                            // 失焦时归一（注意顺序：先提交再更新 focused 标记）
+                            if (focused && !it.isFocused) commit()
+                            focused = it.isFocused
+                        },
+                )
             }
-            StepCell("+", enabled = value < 9999) { onChange(value + 1) }
+            StepCell("+", enabled = shownValue() < MAX_QUANTITY) { apply(shownValue() + 1) }
         }
     }
 }

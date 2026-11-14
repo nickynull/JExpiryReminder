@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.CircularProgressIndicator
@@ -41,6 +42,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -148,7 +150,9 @@ fun rememberFileForPath(path: String): File? {
  * 首页搜索、编辑页各字段、分类管理页新增/改名都用它，尺寸天然一致：
  * [fixedHeight] 非空时按单行处理（48dp 是主用法），为空时按多行自增高度；
  * [showClear] 打开且内容非空时右侧出现小圆叉，一键清空；
- * [isError] 打开时描边转红（错误文案由调用方放在框外）。
+ * [isError] 打开时描边转红（错误文案由调用方放在框外）；
+ * [keyboardType] 决定弹出哪种输入法键盘——纯数字字段传 [KeyboardType.Number]（默认仍是文本键盘，
+ * 不影响不传该参数的调用方）。
  */
 @Composable
 internal fun InputBox(
@@ -162,6 +166,7 @@ internal fun InputBox(
     leading: (@Composable () -> Unit)? = null,
     showClear: Boolean = false,
     isError: Boolean = false,
+    keyboardType: KeyboardType = KeyboardType.Text,
 ) {
     InputBoxShell(
         isEmpty = value.isEmpty(),
@@ -180,6 +185,7 @@ internal fun InputBox(
             cursorBrush = cursorBrush(),
             singleLine = fixedHeight != null,
             minLines = if (fixedHeight != null) 1 else minLines,
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
             modifier = textModifier.then(
                 if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier,
             ),
@@ -203,6 +209,7 @@ internal fun InputBox(
     leading: (@Composable () -> Unit)? = null,
     showClear: Boolean = false,
     isError: Boolean = false,
+    keyboardType: KeyboardType = KeyboardType.Text,
 ) {
     InputBoxShell(
         isEmpty = value.text.isEmpty(),
@@ -221,6 +228,7 @@ internal fun InputBox(
             cursorBrush = cursorBrush(),
             singleLine = fixedHeight != null,
             minLines = if (fixedHeight != null) 1 else minLines,
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
             modifier = textModifier.then(
                 if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier,
             ),
