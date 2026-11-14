@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.9.0](https://github.com/nickynull/JExpiryReminder/compare/v1.8.0...v1.9.0) (2026-11-14)
+
+
+### Features
+
+* 时刻与日期选择改为滚轮 + 输入框 ([f7e2c8d](https://github.com/nickynull/JExpiryReminder/commit/f7e2c8da6cf617789a31356bba98950435f760a2))
+* 编辑页布局对齐优化——空间/分类、到期日期/数量同行各半，移除有效期灰底分组 ([fd4f1c3](https://github.com/nickynull/JExpiryReminder/commit/fd4f1c36e67fbd8a190b8b64b9b0ad48354205ef))
+
 ## [1.8.0](https://github.com/nickynull/JExpiryReminder/compare/v1.7.0...v1.8.0) (2026-11-14)
 
 
