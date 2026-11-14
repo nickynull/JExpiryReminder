@@ -173,6 +173,7 @@ fun HomeScreen(
     val settings = SettingsStore.get()
     val notifyEnabled by settings.notifyEnabled.collectAsStateWithLifecycle()
     val notifyTime by settings.notifyTime.collectAsStateWithLifecycle()
+    val useAlarmClock by settings.useAlarmClock.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     var selectMode by remember { mutableStateOf(false) }
@@ -208,9 +209,9 @@ fun HomeScreen(
     }
 
     // 数据就绪后同步一次排程（新增/修改/删除都会经 store，这里兜底）
-    LaunchedEffect(state.items, notifyEnabled, notifyTime) {
+    LaunchedEffect(state.items, notifyEnabled, notifyTime, useAlarmClock) {
         if (state.loaded) {
-            ReminderService.syncScheduled(context, store, notifyEnabled, notifyTime)
+            ReminderService.syncScheduled(context, store, notifyEnabled, notifyTime, useAlarmClock)
         }
     }
 

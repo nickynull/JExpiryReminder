@@ -46,6 +46,7 @@ class MainActivity : ComponentActivity() {
                     val settings = SettingsStore.get()
                     ReminderService.syncScheduled(
                         appContext, store, settings.notifyEnabled.value, settings.notifyTime.value,
+                        settings.useAlarmClock.value,
                     )
                 }
             }
@@ -84,12 +85,13 @@ class MainActivity : ComponentActivity() {
                 if (Build.VERSION.SDK_INT >= 33) {
                     notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
-                // 前台兜底：精确闹钟不可用时应用内检查一次
+                // 前台兜底：补发今天推送时刻已过、但闹钟被系统吞掉的那几条
                 appScope.launch {
                     val store = ExpiryStore.get()
                     store.load(applicationContext)
                     ReminderService.runForegroundCheck(
-                        applicationContext, store, settings.notifyEnabled.value,
+                        applicationContext, store,
+                        settings.notifyEnabled.value, settings.notifyTime.value,
                     )
                 }
             }

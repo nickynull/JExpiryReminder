@@ -41,6 +41,7 @@ import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +53,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jimmy.expiryreminder.BuildConfig
 import com.jimmy.expiryreminder.core.Backup
@@ -60,6 +64,7 @@ import com.jimmy.expiryreminder.core.SettingsStore
 import com.jimmy.expiryreminder.notify.ReminderService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.time.format.DateTimeFormatter
 
 /** 设置页：主题、通知、备份导出导入、跨设备传输、清空数据。 */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -72,12 +77,32 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
     val themeMode by settings.themeMode.collectAsStateWithLifecycle()
     val notifyEnabled by settings.notifyEnabled.collectAsStateWithLifecycle()
     val notifyTime by settings.notifyTime.collectAsStateWithLifecycle()
+    val useAlarmClock by settings.useAlarmClock.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
     var showTimePicker by remember { mutableStateOf(false) }
     var pendingImport by remember { mutableStateOf<Uri?>(null) }
     var showClearConfirm by remember { mutableStateOf(false) }
+    var showRomHelp by remember { mutableStateOf(false) }
+
+    // 权限/排程状态每次回到前台都重新读一遍：用户去系统设置改完回来能立刻看到结果
+    var reliabilityTick by remember { mutableStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) reliabilityTick++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val exactGranted = remember(reliabilityTick) { ReminderService.canScheduleExact(context) }
+    val batteryIgnored = remember(reliabilityTick) {
+        ReminderService.isIgnoringBatteryOptimizations(context)
+    }
+    val scheduledInfo = remember(reliabilityTick, notifyEnabled, notifyTime, useAlarmClock) {
+        ReminderService.scheduledInfo(context)
+    }
 
     val timeState = rememberTimePickerState(
         initialHour = notifyTime.substringBefore(':').toIntOrNull() ?: 9,
@@ -175,7 +200,9 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
                         checked = notifyEnabled,
                         onCheckedChange = { enabled ->
                             settings.update(context, notifyEnabled = enabled)
-                            ReminderService.syncScheduled(context, store, enabled, notifyTime)
+                            ReminderService.syncScheduled(
+                                context, store, enabled, notifyTime, useAlarmClock,
+                            )
                         },
                     )
                 },
@@ -189,20 +216,99 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
                 },
             )
 
-            if (!ReminderService.canScheduleExact(context)) {
-                ListItem(
-                    headlineContent = { Text("精确闹钟权限") },
-                    supportingContent = { Text("未授予时提醒可能延迟几分钟触发，点此前往授权") },
-                    trailingContent = {
-                        TextButton(onClick = {
-                            activity?.startActivity(
-                                Intent(AndroidSettings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
-                                    .setData(Uri.parse("package:${context.packageName}"))
+            HorizontalDivider()
+            SectionTitle("后台可靠性")
+
+            ListItem(
+                headlineContent = { Text("闹钟式提醒") },
+                supportingContent = {
+                    Text("状态栏显示闹钟图标；抗系统省电清理最稳。关闭后提醒可能延后几分钟到几小时")
+                },
+                trailingContent = {
+                    Switch(
+                        checked = useAlarmClock,
+                        onCheckedChange = { enabled ->
+                            settings.update(context, useAlarmClock = enabled)
+                            ReminderService.syncScheduled(
+                                context, store, notifyEnabled, notifyTime, enabled,
                             )
-                        }) { Text("去授权") }
-                    },
-                )
-            }
+                        },
+                    )
+                },
+            )
+
+            ListItem(
+                headlineContent = { Text("精确闹钟权限") },
+                supportingContent = {
+                    Text(
+                        if (exactGranted) "已授予，提醒可以准点触发"
+                        else "未授予，只能排非精确闹钟，后台很容易被系统推迟甚至丢掉"
+                    )
+                },
+                trailingContent = {
+                    if (exactGranted) {
+                        Text(
+                            "已授予",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    } else {
+                        TextButton(onClick = { openExactAlarmSettings(activity, context) }) {
+                            Text("去授权")
+                        }
+                    }
+                },
+            )
+
+            ListItem(
+                headlineContent = { Text("忽略电池优化") },
+                supportingContent = {
+                    Text(
+                        if (batteryIgnored) "已忽略，系统不会因省电清理掉提醒"
+                        else "未忽略，部分机型会限制后台运行，导致提醒不弹"
+                    )
+                },
+                trailingContent = {
+                    if (batteryIgnored) {
+                        Text(
+                            "已忽略",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    } else {
+                        TextButton(onClick = { openBatterySettings(activity, context) }) {
+                            Text("去设置")
+                        }
+                    }
+                },
+            )
+
+            ListItem(
+                headlineContent = { Text("自启动 / 后台运行") },
+                supportingContent = { Text("小米、华为、OPPO、vivo 等机型还需手动允许") },
+                trailingContent = {
+                    TextButton(onClick = { showRomHelp = true }) { Text("查看") }
+                },
+            )
+
+            ListItem(
+                headlineContent = { Text("已排程提醒") },
+                supportingContent = {
+                    Text(
+                        if (scheduledInfo.count == 0) {
+                            "当前没有待提醒的条目"
+                        } else {
+                            buildString {
+                                append("共 ${scheduledInfo.count} 条")
+                                scheduledInfo.nextAt?.let {
+                                    append(" · 下一次 ")
+                                    append(it.format(NEXT_AT_FORMAT))
+                                }
+                            }
+                        }
+                    )
+                },
+            )
 
             HorizontalDivider()
             SectionTitle("外观")
@@ -325,7 +431,9 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
                 TextButton(onClick = {
                     val time = "%02d:%02d".format(timeState.hour, timeState.minute)
                     settings.update(context, notifyTime = time)
-                    ReminderService.syncScheduled(context, store, notifyEnabled, time)
+                    ReminderService.syncScheduled(
+                        context, store, notifyEnabled, time, useAlarmClock,
+                    )
                     showTimePicker = false
                 }) { Text("确定") }
             },
@@ -345,13 +453,36 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
                     showClearConfirm = false
                     scope.launch {
                         store.clearItems(context)
-                        ReminderService.syncScheduled(context, store, notifyEnabled, notifyTime)
+                        ReminderService.syncScheduled(
+                            context, store, notifyEnabled, notifyTime, useAlarmClock,
+                        )
                         snackbar.showSnackbar("已清空全部物品")
                     }
                 }) { Text("清空", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
                 TextButton(onClick = { showClearConfirm = false }) { Text("取消") }
+            },
+        )
+    }
+
+    if (showRomHelp) {
+        AlertDialog(
+            onDismissRequest = { showRomHelp = false },
+            title = { Text("允许后台运行") },
+            text = {
+                Text(
+                    "系统不允许自启动或强制清理后台时，任何应用都无法定时提醒。可按机型检查：\n\n" +
+                        "· 小米 / 红米：设置 → 应用设置 → 应用管理 → 到期提醒 → 自启动 + 省电策略「无限制」\n" +
+                        "· 华为 / 荣耀：设置 → 应用 → 应用启动管理 → 到期提醒 → 手动管理（全部打开）\n" +
+                        "· OPPO / 一加：设置 → 应用 → 自启动管理，耗电管理选「允许后台运行」\n" +
+                        "· vivo / iQOO：设置 → 应用与权限 → 自启动，后台耗电管理选「允许后台高耗电」\n\n" +
+                        "另外：在最近任务里「强行停止」应用会让系统清掉全部闹钟，" +
+                        "重新打开一次应用即可恢复。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showRomHelp = false }) { Text("知道了") }
             },
         )
     }
@@ -375,6 +506,28 @@ private fun modeLabel(mode: SettingsStore.ThemeMode): String = when (mode) {
 
 /** 关于页展示的项目主页。 */
 private const val GITHUB_URL = "https://github.com/nickynull/JExpiryReminder"
+
+/** 「下一次提醒」的展示格式。 */
+private val NEXT_AT_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("M月d日 HH:mm")
+
+/** 跳到系统的「闹钟和提醒」特殊权限页。 */
+private fun openExactAlarmSettings(activity: Activity?, context: Context) {
+    runCatching {
+        activity?.startActivity(
+            Intent(AndroidSettings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
+                .setData(Uri.parse("package:${context.packageName}"))
+        )
+    }
+}
+
+/** 申请忽略电池优化；部分 ROM 没有直连入口时退回到电池优化列表。 */
+private fun openBatterySettings(activity: Activity?, context: Context) {
+    val direct = Intent(AndroidSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+        .setData(Uri.parse("package:${context.packageName}"))
+    runCatching { activity?.startActivity(direct) }.onFailure {
+        runCatching { activity?.startActivity(Intent(AndroidSettings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+    }
+}
 
 private fun openUrl(context: Context, url: String) {
     runCatching {

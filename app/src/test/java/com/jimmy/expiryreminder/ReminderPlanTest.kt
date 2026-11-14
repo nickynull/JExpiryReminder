@@ -5,6 +5,7 @@ import com.jimmy.expiryreminder.core.ExpiryItem
 import com.jimmy.expiryreminder.core.ShelfLifeUnit
 import com.jimmy.expiryreminder.notify.ReminderService
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDateTime
@@ -88,5 +89,17 @@ class ReminderPlanTest {
         )
         // 09:00 的 0 天档 = 11-12 09:00
         assertEquals(LocalDateTime.of(2026, 11, 12, 9, 0), plan.first().at)
+    }
+
+    @Test
+    fun `前台补发只在推送时刻之后生效`() {
+        // 早于推送时刻：交给闹钟，别一开 App 就提前弹
+        assertFalse(ReminderService.isPastNotifyTime("09:00", LocalDateTime.of(2026, 11, 11, 8, 59)))
+        // 到点及以后：允许补发
+        assertTrue(ReminderService.isPastNotifyTime("09:00", LocalDateTime.of(2026, 11, 11, 9, 0)))
+        assertTrue(ReminderService.isPastNotifyTime("09:00", LocalDateTime.of(2026, 11, 11, 23, 30)))
+        // 非法时刻按 09:00 处理
+        assertTrue(ReminderService.isPastNotifyTime("25:99", LocalDateTime.of(2026, 11, 11, 10, 0)))
+        assertFalse(ReminderService.isPastNotifyTime("25:99", LocalDateTime.of(2026, 11, 11, 8, 0)))
     }
 }

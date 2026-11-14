@@ -12,9 +12,21 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!--
+      精确闹钟：
+      USE_EXACT_ALARM（API 33+）安装即授予、用户不可撤销。targetSdk 33+ 的新装应用在
+      Android 14+ 上拿不到 SCHEDULE_EXACT_ALARM（默认拒绝），排程会退化成非精确闹钟，
+      后台被 Doze / 待机分桶推迟甚至吞掉——这是「退出后不弹提醒」的根因。
+      注意：Google Play 对该权限有政策审核（仅限闹钟/日历类应用），本应用只通过
+      GitHub 发布 APK，不上架 Play；若将来要上架，删掉这一行改回主动请求
+      SCHEDULE_EXACT_ALARM 即可。
+    -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 设置页「忽略电池优化」入口用；仅用于让提醒不被省电策略掐掉 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:name=".App"
@@ -43,6 +55,21 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+          其它会让排程失效的系统事件：精确闹钟授权变化（撤销时系统会取消全部精确闹钟）、
+          系统时间/时区变更、覆盖安装升级。都只由系统发送，exported 保持 false。
+        -->
+        <receiver
+            android:name=".notify.ReminderSyncReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 

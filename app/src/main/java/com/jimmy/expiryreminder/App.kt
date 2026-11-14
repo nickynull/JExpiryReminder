@@ -24,6 +24,7 @@ class App : Application() {
             ReminderService.syncScheduled(
                 this@App, ExpiryStore.get(),
                 settings.notifyEnabled.value, settings.notifyTime.value,
+                settings.useAlarmClock.value,
             )
         }
     }
