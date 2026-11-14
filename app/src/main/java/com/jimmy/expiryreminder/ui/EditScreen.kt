@@ -41,8 +41,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DatePicker
-import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -57,7 +55,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -81,9 +78,12 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import com.jimmy.expiryreminder.core.Categories
 import com.jimmy.expiryreminder.core.Dates
@@ -114,8 +114,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.time.Instant
-import java.time.ZoneId
+import java.time.LocalDate
 
 private const val MAX_NOTE = 200
 
@@ -132,6 +131,7 @@ fun EditScreen(
     val context = LocalContext.current
     val store = ExpiryStore.get()
     val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
     val existing = itemId?.let { store.getItem(it) }
 
     var name by remember { mutableStateOf(existing?.name ?: prefill?.name ?: "") }
@@ -277,10 +277,11 @@ fun EditScreen(
         }
     }
 
-    // 日期选择器
+    // 日期选择器：datePickerTarget 决定日期回填生产日期还是到期日期
     var showDatePicker by remember { mutableStateOf(false) }
     var datePickerTarget by remember { mutableStateOf("expire") } // expire | production
-    val datePickerState = rememberDatePickerState()
+    // 滚轮里的临时日期，点「确定」才写回字段
+    var pickerDate by remember { mutableStateOf(LocalDate.now()) }
     // 图片添加来源菜单
     var imageSourceMenu by remember { mutableStateOf(false) }
     // 分类/单位下拉
@@ -621,7 +622,10 @@ fun EditScreen(
                                     SelectBox(
                                         text = productionDate.ifEmpty { "选择日期" },
                                         onClick = {
-                                            datePickerTarget = "production"; showDatePicker = true
+                                            datePickerTarget = "production"
+                                            pickerDate = runCatching { LocalDate.parse(productionDate) }
+                                                .getOrNull() ?: LocalDate.now()
+                                            showDatePicker = true
                                         },
                                         modifier = Modifier.fillMaxWidth(),
                                     )
@@ -680,7 +684,12 @@ fun EditScreen(
                                         modifier = Modifier.size(16.dp),
                                     )
                                 },
-                                onClick = { datePickerTarget = "expire"; showDatePicker = true },
+                                onClick = {
+                                    datePickerTarget = "expire"
+                                    pickerDate = runCatching { LocalDate.parse(expireAt) }
+                                        .getOrNull() ?: LocalDate.now()
+                                    showDatePicker = true
+                                },
                                 modifier = Modifier.fillMaxWidth(),
                             )
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -990,27 +999,70 @@ fun EditScreen(
     }
 
     if (showDatePicker) {
-        DatePickerDialog(
+        // 和「推送时刻」同款自绘对话框：滚轮中心行可点，数字键盘弹起时靠 imePadding 让位
+        Dialog(
             onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    datePickerState.selectedDateMillis?.let { millis ->
-                        val date = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
-                        if (datePickerTarget == "production") {
-                            productionDate = date.toString()
-                            productionFromOcr = false
-                        } else {
-                            expireAt = date.toString()
-                            manualExpire = true
-                            expireFromOcr = false
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false,
+            ),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .imePadding(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(28.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    tonalElevation = 6.dp,
+                ) {
+                    Column(Modifier.padding(horizontal = 20.dp, vertical = 20.dp)) {
+                        Text(
+                            if (datePickerTarget == "production") "选择生产日期" else "选择到期日期",
+                            style = MaterialTheme.typography.headlineSmall,
+                            modifier = Modifier.padding(horizontal = 4.dp),
+                        )
+                        Text(
+                            "滑动选择，或在下方输入框直接输入",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        DateWheelPicker(
+                            date = pickerDate,
+                            onDateChange = { pickerDate = it },
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            TextButton(onClick = { showDatePicker = false }) { Text("取消") }
+                            TextButton(onClick = {
+                                // 滚轮里可能正在输入（只敲了一位还没自动提交），
+                                // 先让它失焦把草稿交上来，等一帧再读，否则会存到旧值
+                                focusManager.clearFocus()
+                                scope.launch {
+                                    withFrameNanos { }
+                                    val text = pickerDate.toString()
+                                    if (datePickerTarget == "production") {
+                                        productionDate = text
+                                        productionFromOcr = false
+                                    } else {
+                                        expireAt = text
+                                        manualExpire = true
+                                        expireFromOcr = false
+                                    }
+                                    showDatePicker = false
+                                }
+                            }) { Text("确定") }
                         }
                     }
-                    showDatePicker = false
-                }) { Text("确定") }
-            },
-            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("取消") } },
-        ) {
-            DatePicker(state = datePickerState)
+                }
+            }
         }
     }
 

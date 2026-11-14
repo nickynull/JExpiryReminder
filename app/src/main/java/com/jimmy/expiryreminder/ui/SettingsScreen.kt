@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,6 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -40,25 +42,29 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -88,8 +94,12 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
     val statCards by settings.statCards.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
 
     var showTimePicker by remember { mutableStateOf(false) }
+    // 滚轮对话框里的临时选择，点「确定」才写回设置
+    var wheelHour by remember { mutableIntStateOf(notifyTime.substringBefore(':').toIntOrNull() ?: 9) }
+    var wheelMinute by remember { mutableIntStateOf(notifyTime.substringAfter(':').toIntOrNull() ?: 0) }
     var showStatCards by remember { mutableStateOf(false) }
     var pendingImport by remember { mutableStateOf<Uri?>(null) }
     var showClearConfirm by remember { mutableStateOf(false) }
@@ -112,12 +122,6 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
     val scheduledInfo = remember(reliabilityTick, notifyEnabled, notifyTime, useAlarmClock) {
         ReminderService.scheduledInfo(context)
     }
-
-    val timeState = rememberTimePickerState(
-        initialHour = notifyTime.substringBefore(':').toIntOrNull() ?: 9,
-        initialMinute = notifyTime.substringAfter(':').toIntOrNull() ?: 0,
-        is24Hour = true,
-    )
 
     // 导出：SAF 建文档
     val exportLauncher = rememberLauncherForActivityResult(
@@ -221,7 +225,12 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
                 headlineContent = { Text("推送时刻") },
                 supportingContent = { Text("每天 $notifyTime 推送到期提醒") },
                 trailingContent = {
-                    OutlinedButton(onClick = { showTimePicker = true }) { Text(notifyTime) }
+                    OutlinedButton(onClick = {
+                        // 每次打开都从当前设置重新起算，滚轮从现有时刻开始
+                        wheelHour = notifyTime.substringBefore(':').toIntOrNull() ?: 9
+                        wheelMinute = notifyTime.substringAfter(':').toIntOrNull() ?: 0
+                        showTimePicker = true
+                    }) { Text(notifyTime) }
                 },
             )
 
@@ -492,24 +501,71 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
     }
 
     if (showTimePicker) {
-        AlertDialog(
+        // 用自绘 Dialog 而不是 AlertDialog：滚轮中心行可以直接敲数字，
+        // 数字键盘弹起时需要 imePadding 把整块内容顶上去，AlertDialog 的默认窗口做不到
+        Dialog(
             onDismissRequest = { showTimePicker = false },
-            title = { Text("选择推送时刻") },
-            text = { TimePicker(state = timeState) },
-            confirmButton = {
-                TextButton(onClick = {
-                    val time = "%02d:%02d".format(timeState.hour, timeState.minute)
-                    settings.update(context, notifyTime = time)
-                    ReminderService.syncScheduled(
-                        context, store, notifyEnabled, time, useAlarmClock,
-                    )
-                    showTimePicker = false
-                }) { Text("确定") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showTimePicker = false }) { Text("取消") }
-            },
-        )
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                // 交给 Compose 自己处理 insets，否则窗口 resize 和 imePadding 会叠成双倍偏移
+                decorFitsSystemWindows = false,
+            ),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .imePadding(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(28.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    tonalElevation = 6.dp,
+                ) {
+                    Column(Modifier.padding(horizontal = 20.dp, vertical = 20.dp)) {
+                        Text(
+                            "选择推送时刻",
+                            style = MaterialTheme.typography.headlineSmall,
+                            modifier = Modifier.padding(horizontal = 4.dp),
+                        )
+                        Text(
+                            "滑动选择，或在下方输入框直接输入",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        TimeWheelPicker(
+                            hour = wheelHour,
+                            minute = wheelMinute,
+                            onHourChange = { wheelHour = it },
+                            onMinuteChange = { wheelMinute = it },
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            TextButton(onClick = { showTimePicker = false }) { Text("取消") }
+                            TextButton(onClick = {
+                                // 滚轮里可能正在输入（只敲了一位还没自动提交），
+                                // 先让它失焦把草稿交上来，等一帧再读，否则会存到旧值
+                                focusManager.clearFocus()
+                                scope.launch {
+                                    withFrameNanos { }
+                                    val time = "%02d:%02d".format(wheelHour, wheelMinute)
+                                    settings.update(context, notifyTime = time)
+                                    ReminderService.syncScheduled(
+                                        context, store, notifyEnabled, time, useAlarmClock,
+                                    )
+                                    showTimePicker = false
+                                }
+                            }) { Text("确定") }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if (showClearConfirm) {
