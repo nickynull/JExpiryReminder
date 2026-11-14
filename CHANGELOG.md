@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.8.0](https://github.com/nickynull/JExpiryReminder/compare/v1.7.0...v1.8.0) (2026-11-14)
+
+
+### Features
+
+* 主页统计卡支持自定义显示 ([f2feca5](https://github.com/nickynull/JExpiryReminder/commit/f2feca556c43c8ad87c5191989b010076eb061a9))
+
+
+### Bug Fixes
+
+* 修复退出应用后提醒通知不弹 ([67bf5b3](https://github.com/nickynull/JExpiryReminder/commit/67bf5b3e06b8175fb4e78c41c4a9ad3994b102b9))
+
 ## [1.7.0](https://github.com/nickynull/JExpiryReminder/compare/v1.6.0...v1.7.0) (2026-11-13)
 
 
