@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.13.0](https://github.com/nickynull/JExpiryReminder/compare/v1.12.0...v1.13.0) (2026-11-16)
+
+
+### Features
+
+* **app:** 长按桌面图标提供「新增物品 / 拍照识别」快捷方式 ([b3b889c](https://github.com/nickynull/JExpiryReminder/commit/b3b889c8a0f1bf10c70be3727323b0747e68264e))
+* **app:** 长按桌面图标提供「新增物品 / 拍照识别」快捷方式 ([38c06f8](https://github.com/nickynull/JExpiryReminder/commit/38c06f8aa1a496bc19faf09a133ac4620ac9706a))
+* **sync:** 同一 Wi-Fi 下自动发现设备并增量合并数据 ([abf4f25](https://github.com/nickynull/JExpiryReminder/commit/abf4f255abab5db4d56e59be266b41d36ca5b27b))
+* **sync:** 同一 Wi-Fi 下自动发现设备并增量合并数据 ([67accec](https://github.com/nickynull/JExpiryReminder/commit/67accec92466b6eaf5b9fa9f547588e80f092489))
+* **widget:** 桌面小组件，三种尺寸展示到期清单 ([3a713ad](https://github.com/nickynull/JExpiryReminder/commit/3a713ad5756ab86a134b5c3c9b0e6e3791f30c46))
+* **widget:** 桌面小组件，三种尺寸展示到期清单 ([62a37b4](https://github.com/nickynull/JExpiryReminder/commit/62a37b45ac92d6af6c0c2f0d609ebb4963fcc87c))
+
 ## [1.12.0](https://github.com/nickynull/JExpiryReminder/compare/v1.11.0...v1.12.0) (2026-11-16)
 
 
