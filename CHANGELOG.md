@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.1.0](https://github.com/nickynull/JExpiryReminder/compare/v2.0.0...v2.1.0) (2026-11-23)
+
+
+### Features
+
+* **remind:** 循环任务支持定点提醒时刻，周期 1 天可正常推进 ([68419ff](https://github.com/nickynull/JExpiryReminder/commit/68419fff8315f5ce37569890ef415c4ae235fe7c))
+* 整合本地分支功能（不含局域网自动同步） ([1de5c47](https://github.com/nickynull/JExpiryReminder/commit/1de5c4772ddca8330f05be73187f0ab3426763b8))
+* 整合本地功能：定点提醒、归档、小组件混排、OCR 裁剪识别与返回手势 ([a4edd96](https://github.com/nickynull/JExpiryReminder/commit/a4edd967fe101da86485cecfca307e8a04cb233a))
+
 ## [2.0.0](https://github.com/nickynull/JExpiryReminder/compare/v1.14.0...v2.0.0) (2026-11-16)
 
 
