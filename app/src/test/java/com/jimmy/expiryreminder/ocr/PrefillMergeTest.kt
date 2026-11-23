@@ -1,5 +1,6 @@
 package com.jimmy.expiryreminder.ocr
 
+import com.jimmy.expiryreminder.core.ExpiryCalc
 import com.jimmy.expiryreminder.core.ShelfLifeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -81,7 +82,7 @@ class PrefillMergeTest {
         assertEquals("2026-03-15", draft.productionDate)
         assertEquals(6, draft.shelfLife)
         assertEquals(ShelfLifeUnit.month, draft.shelfLifeUnit)
-        assertEquals("2026-09-15", draft.expireAt)
+        assertEquals("2026-09-14", draft.expireAt)
         assertTrue("能推算时不该锁死到期日", !draft.manualExpire)
     }
 
@@ -103,12 +104,12 @@ class PrefillMergeTest {
             ResultMerger.Merged(
                 dates = listOf(
                     date("2026-03-15", DateRole.produce, 0.85, 0),
-                    date("2026-09-15", DateRole.expire, 0.85, 0),
+                    date("2026-09-14", DateRole.expire, 0.85, 0),
                 ),
             ),
         )
         assertEquals("2026-03-15", draft.productionDate)
-        assertEquals("2026-09-15", draft.expireAt)
+        assertEquals("2026-09-14", draft.expireAt)
         assertEquals(6, draft.shelfLife)
         assertEquals(ShelfLifeUnit.month, draft.shelfLifeUnit)
         assertTrue(draft.manualExpire)
@@ -152,7 +153,7 @@ class PrefillMergeTest {
     fun `反推有效期优先整年`() {
         val inferred = PrefillMapper.inferShelfLife(
             LocalDate.of(2026, 1, 10),
-            LocalDate.of(2028, 1, 10),
+            LocalDate.of(2028, 1, 9),
         )
         assertEquals(2 to ShelfLifeUnit.year, inferred)
     }
@@ -161,7 +162,7 @@ class PrefillMergeTest {
     fun `反推有效期按整月`() {
         val inferred = PrefillMapper.inferShelfLife(
             LocalDate.of(2026, 1, 10),
-            LocalDate.of(2026, 4, 10),
+            LocalDate.of(2026, 4, 9),
         )
         assertEquals(3 to ShelfLifeUnit.month, inferred)
     }
@@ -170,9 +171,19 @@ class PrefillMergeTest {
     fun `反推不出整月时按天`() {
         val inferred = PrefillMapper.inferShelfLife(
             LocalDate.of(2026, 1, 10),
-            LocalDate.of(2026, 1, 25),
+            LocalDate.of(2026, 1, 24),
         )
         assertEquals(15 to ShelfLifeUnit.day, inferred)
+    }
+
+    @Test
+    fun `反推有效期与含首尾推算互逆`() {
+        val expire = ExpiryCalc.computeExpireAt("2026-11-10", 1, ShelfLifeUnit.month)
+        assertEquals("2026-12-09", expire)
+        assertEquals(
+            1 to ShelfLifeUnit.month,
+            PrefillMapper.inferShelfLife(LocalDate.of(2026, 11, 10), LocalDate.parse(expire)),
+        )
     }
 
     @Test

@@ -94,16 +94,18 @@ object PrefillMapper {
      * 反推不准也不致命——[PrefillDraft.manualExpire] 为 true 时添加页不会重算到期日。
      */
     internal fun inferShelfLife(produce: LocalDate, expire: LocalDate): Pair<Int, ShelfLifeUnit>? {
-        if (!expire.isAfter(produce)) return null
-        val months = ChronoUnit.MONTHS.between(produce, expire)
-        if (months > 0 && produce.plusMonths(months) == expire) {
+        // 到期日含首尾（起始日 + 周期 - 1 天），反推时先把到期日还原成「周期终点」再比对整月/整年
+        val endExclusive = expire.plusDays(1)
+        if (!endExclusive.isAfter(produce)) return null
+        val months = ChronoUnit.MONTHS.between(produce, endExclusive)
+        if (months > 0 && produce.plusMonths(months) == endExclusive) {
             return if (months % 12L == 0L) {
                 (months / 12).toInt() to ShelfLifeUnit.year
             } else {
                 months.toInt() to ShelfLifeUnit.month
             }
         }
-        val days = ChronoUnit.DAYS.between(produce, expire)
+        val days = ChronoUnit.DAYS.between(produce, endExclusive)
         return if (days > 0) days.toInt() to ShelfLifeUnit.day else null
     }
 }

@@ -45,10 +45,19 @@ fun RemindDayChips(
     onToggle: (Int) -> Unit,
     onCustom: () -> Unit,
     modifier: Modifier = Modifier,
+    /** chip 高度：默认 30dp（设置弹窗），编辑页传 26dp 更紧凑。 */
+    chipHeight: androidx.compose.ui.unit.Dp = 30.dp,
+    /** 紧凑文案：档位显示「60天」而不是「60 天前」，chip 变窄能少排一行；语义由外层「提前提醒」标签补足。 */
+    compactLabel: Boolean = false,
 ) {
     val customDays = selected.filter { it !in REMIND_DAY_OPTIONS }.sortedDescending()
     val chips = (REMIND_DAY_OPTIONS.filter { it > 0 } + customDays).sortedDescending() +
         REMIND_DAY_OPTIONS.filter { it == 0 }
+    fun chipText(day: Int) = if (compactLabel) {
+        if (day == 0) "当天" else "${day}天"
+    } else {
+        remindDayLabel(day)
+    }
     FlowRow(
         modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -59,8 +68,8 @@ fun RemindDayChips(
             FilterChip(
                 selected = on,
                 onClick = { onToggle(day) },
-                label = { Text(remindDayLabel(day)) },
-                modifier = Modifier.height(30.dp),
+                label = { Text(chipText(day)) },
+                modifier = Modifier.height(chipHeight),
                 trailingIcon = if (on) {
                     {
                         Icon(
@@ -77,7 +86,7 @@ fun RemindDayChips(
             selected = false,
             onClick = onCustom,
             label = { Text("自定义") },
-            modifier = Modifier.height(30.dp),
+            modifier = Modifier.height(chipHeight),
             leadingIcon = {
                 Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(14.dp))
             },

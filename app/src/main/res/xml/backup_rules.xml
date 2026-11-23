@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 11 及以下的备份规则（fullBackupContent）。
+  应用的全部物品数据、图片与可信设备密钥都在内部存储里，明文备份出去等于
+  把「家庭物品清单 + 同步通道凭据」一起交给备份文件。需要迁移时用应用内的
+  「导出备份」（SAF，用户自己选位置），不走系统备份通道。
+-->
+<full-backup-content>
+    <exclude domain="file" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="database" path="." />
+</full-backup-content>

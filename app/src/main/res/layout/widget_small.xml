@@ -25,67 +25,98 @@
         android:orientation="vertical"
         android:padding="12dp">
 
-        <LinearLayout
+        <!-- 标题行：倒计时 / 循环 两个数量分开显示，无切换交互 -->
+        <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
             android:paddingBottom="8dp">
 
-            <TextView
-                android:id="@+id/widget_count"
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="0"
-                android:textColor="#1F2D3D"
-                android:textSize="32sp"
-                android:textStyle="bold"
-                android:includeFontPadding="false" />
+                android:layout_gravity="start|center_vertical"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
 
-            <!-- 2×2 宽度最紧：标签占剩余宽度，空间不足时先截断文字，绝不挤压右侧两个按键 -->
-            <TextView
-                android:id="@+id/widget_count_label"
-                android:layout_width="0dp"
+                <TextView
+                    android:id="@+id/widget_count_countdown"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:includeFontPadding="false"
+                    android:text="0"
+                    android:textColor="#1F2D3D"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/widget_label_countdown"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:text="倒计时"
+                    android:textColor="#909399"
+                    android:textSize="10sp" />
+
+                <TextView
+                    android:id="@+id/widget_count_cycle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:includeFontPadding="false"
+                    android:text="0"
+                    android:textColor="#1F2D3D"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/widget_label_cycle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:text="循环"
+                    android:textColor="#E6A23C"
+                    android:textSize="10sp" />
+            </LinearLayout>
+
+            <!-- 相机键与新增键锚定右侧；底色与图标色由 Provider 按主题设置 -->
+            <LinearLayout
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:paddingStart="6dp"
-                android:text="到期"
-                android:textColor="#E6A23C"
-                android:textSize="14sp"
-                android:textStyle="bold" />
+                android:layout_gravity="end|center_vertical"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
 
-            <!-- 相机键：进应用内选图（拍照）页；底色与图标色由 ExpiryWidgetProvider 按主题设置 -->
-            <ImageView
-                android:id="@+id/widget_camera"
-                android:layout_width="30dp"
-                android:layout_height="30dp"
-                android:layout_marginEnd="6dp"
-                android:background="@drawable/widget_cam_bg_light"
-                android:contentDescription="拍照录入"
-                android:padding="7dp"
-                android:scaleType="fitCenter"
-                android:src="@drawable/ic_widget_camera" />
+                <ImageView
+                    android:id="@+id/widget_camera"
+                    android:layout_width="30dp"
+                    android:layout_height="30dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/widget_cam_bg_light"
+                    android:contentDescription="拍照录入"
+                    android:padding="7dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_widget_camera" />
 
-            <TextView
-                android:id="@+id/widget_add"
-                android:layout_width="30dp"
-                android:layout_height="30dp"
-                android:background="@drawable/widget_add_bg"
-                android:gravity="center"
-                android:includeFontPadding="false"
-                android:text="+"
-                android:textColor="#FFFFFF"
-                android:textSize="20sp" />
-        </LinearLayout>
+                <TextView
+                    android:id="@+id/widget_add"
+                    android:layout_width="30dp"
+                    android:layout_height="30dp"
+                    android:background="@drawable/widget_add_bg"
+                    android:gravity="center"
+                    android:includeFontPadding="false"
+                    android:text="+"
+                    android:textColor="#FFFFFF"
+                    android:textSize="20sp" />
+            </LinearLayout>
+        </FrameLayout>
 
+        <!-- 可滚动列表：RemoteViewsService 提供，行内标注类型 -->
         <ListView
             android:id="@+id/widget_list"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:divider="@android:color/transparent"
+            android:divider="@null"
             android:dividerHeight="6dp"
             android:scrollbars="none" />
 

@@ -38,6 +38,7 @@ import com.jimmy.expiryreminder.ocr.NameCandidate
 import com.jimmy.expiryreminder.ocr.NameExtractor
 import com.jimmy.expiryreminder.ocr.OcrEngine
 import com.jimmy.expiryreminder.ocr.OcrLine
+import com.jimmy.expiryreminder.ocr.OcrRegionRetry
 import com.jimmy.expiryreminder.ocr.PrefillDraft
 import com.jimmy.expiryreminder.ocr.PrefillMapper
 import com.jimmy.expiryreminder.ocr.ResultMerger
@@ -181,5 +182,16 @@ private suspend fun processOne(context: Context, uri: Uri): Pair<ExpiryImage, Li
         val lines = runCatching {
             OcrEngine.recognizeFile(ImageStore.imageFile(context, path))
         }.getOrDefault(emptyList())
-        image to lines
+
+        // 日期没读出可预填候选时，自动把疑似日期区域放大重识一遍——
+        // 喷码小字在整图识别下经常读错，区域放大是最有效的补救
+        val file = ImageStore.imageFile(context, path)
+        val allLines = if (DateExtractor.extract(lines, 0).none { it.prefillable }) {
+            val retry = runCatching { OcrRegionRetry.retryDateRegions(file, lines) }
+                .getOrDefault(emptyList())
+            lines + retry
+        } else {
+            lines
+        }
+        image to allLines
     }

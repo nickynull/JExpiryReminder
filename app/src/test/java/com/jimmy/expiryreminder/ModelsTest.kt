@@ -74,14 +74,73 @@ class ModelsTest {
     }
 
     @Test
-    fun `computeExpireAt`() {
-        assertEquals("2026-10-31", ExpiryCalc.computeExpireAt("2026-10-01", 30, ShelfLifeUnit.day))
-        assertEquals("2026-11-01", ExpiryCalc.computeExpireAt("2026-10-01", 1, ShelfLifeUnit.month))
-        assertEquals("2027-10-01", ExpiryCalc.computeExpireAt("2026-10-01", 1, ShelfLifeUnit.year))
-        assertEquals("2026-01-31", ExpiryCalc.computeExpireAt("2025-10-31", 3, ShelfLifeUnit.month))
+    fun `computeExpireAt 按含首尾计算到期日`() {
+        assertEquals("2026-10-30", ExpiryCalc.computeExpireAt("2026-10-01", 30, ShelfLifeUnit.day))
+        assertEquals("2026-10-31", ExpiryCalc.computeExpireAt("2026-10-01", 1, ShelfLifeUnit.month))
+        assertEquals("2027-09-30", ExpiryCalc.computeExpireAt("2026-10-01", 1, ShelfLifeUnit.year))
+        assertEquals("2026-01-30", ExpiryCalc.computeExpireAt("2025-10-31", 3, ShelfLifeUnit.month))
+        // 用户口径：11-10 生产、有效期 1 个月 → 12-09 到期
+        assertEquals("2026-12-09", ExpiryCalc.computeExpireAt("2026-11-10", 1, ShelfLifeUnit.month))
+        assertEquals("2026-11-16", ExpiryCalc.computeExpireAt("2026-11-10", 7, ShelfLifeUnit.day))
         // 条件不足
         assertEquals("", ExpiryCalc.computeExpireAt("bad", 1, ShelfLifeUnit.day))
         assertEquals("", ExpiryCalc.computeExpireAt("2026-10-01", 0, ShelfLifeUnit.day))
+    }
+
+    @Test
+    fun `循环任务完成本次后进入下一周期并重置提醒记录`() {
+        val cycle = item().copy(
+            name = "吸尘器滤芯", productionDate = "2026-11-01",
+            shelfLife = 30, shelfLifeUnit = ShelfLifeUnit.day,
+            expireAt = "2026-11-30", repeatEnabled = true,
+            notifiedKeys = listOf("2026-11-23:i1:7"),
+        )
+        val advanced = ExpiryCalc.advanceCycle(
+            cycle, java.time.LocalDate.of(2026, 11, 17), "2026-11-17T09:00:00",
+        )
+        assertEquals("2026-11-17", advanced.productionDate)
+        assertEquals("2026-12-16", advanced.expireAt)
+        assertEquals(emptyList<String>(), advanced.notifiedKeys)
+        assertEquals("2026-11-17T09:00:00", advanced.updatedAt)
+
+        // 普通物品不会被循环推进
+        assertEquals(item(), ExpiryCalc.advanceCycle(item(), java.time.LocalDate.of(2026, 11, 17)))
+    }
+
+    @Test
+    fun `周期1天的循环任务完成后下一周期从明天起算`() {
+        // 每天任务：今天到期（expireAt=今天），点「完成本次」后应推进到明天，
+        // 否则到期日恒等于完成日，每天任务永远卡在「今天到期」点不动
+        val daily = item().copy(
+            name = "吃药", productionDate = "2026-11-18",
+            shelfLife = 1, shelfLifeUnit = ShelfLifeUnit.day,
+            expireAt = "2026-11-18", repeatEnabled = true,
+        )
+        val advanced = ExpiryCalc.advanceCycle(
+            daily, java.time.LocalDate.of(2026, 11, 18), "2026-11-18T13:00:00",
+        )
+        // 上次完成日如实记录今天；到期日翻到明天
+        assertEquals("2026-11-18", advanced.productionDate)
+        assertEquals("2026-11-19", advanced.expireAt)
+        assertEquals(emptyList<String>(), advanced.notifiedKeys)
+
+        // 周期 1 月的任务不受特例影响：仍是完成日 + 1 月 − 1 天
+        val monthly = item().copy(
+            productionDate = "2026-11-18", shelfLife = 1,
+            shelfLifeUnit = ShelfLifeUnit.month, expireAt = "2026-11-18", repeatEnabled = true,
+        )
+        assertEquals(
+            "2026-12-17",
+            ExpiryCalc.advanceCycle(monthly, java.time.LocalDate.of(2026, 11, 18)).expireAt,
+        )
+    }
+
+    @Test
+    fun `repeatEnabled 旧数据缺省 false 且可往返`() {
+        val raw = JSONObject().put("id", "i2").put("name", "牛奶")
+        assertFalse(ExpiryItem.fromJson(raw)!!.repeatEnabled)
+        val repeat = item().copy(repeatEnabled = true)
+        assertTrue(ExpiryItem.fromJson(repeat.toJson())!!.repeatEnabled)
     }
 
     @Test

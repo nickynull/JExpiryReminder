@@ -25,6 +25,8 @@ android {
         targetSdk = 36
         // versionName 由 release-please 自动维护（generic extra-file 只替换标记之间的版本号）；
         // versionCode 从 versionName 推导（1.2.29 -> 10229），保证每次发版递增
+        // 本地分支 1.27.0：移除语音输入与内置 Vosk 离线模型（APK 回落约 66MB）；
+        // 上游 release-please 下次发版会覆盖下面标记之间的值。
         // x-release-please-start-version
         versionName = "2.0.0"
         // x-release-please-end

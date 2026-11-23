@@ -7,7 +7,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,7 +19,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -42,7 +43,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -325,6 +328,62 @@ private fun InputBoxShell(
 }
 
 /**
+ * 全站「浮起面板」底：半透明面板 + 柔投影 + 一条能看清边界的立体描边。
+ *
+ * 透明度：默认 0.95，按钮背后的内容只剩极淡的轮廓，按钮文字干净可读；
+ * 需要承载数字/正文的地方（统计卡）由调用方传更高的 [fillAlpha] 保对比度。
+ *
+ * 描边为什么用渐变而不是白色亮边：白亮边落在浅色背景上等于没有边界。这里整圈走
+ * outlineVariant 灰线（上 0.62 → 中 0.82 → 底 0.95），四边都看得见；靠深浅差异做厚度，
+ * 上边略浅、下边最深，面板仍然是「压」在内容上的感觉。再配合 [Modifier.shadow] 起浮。
+ *
+ * 为什么不直接用 `Surface(color = 半透明, shadowElevation = x)`：
+ * M3 的 Surface 会把容器色当作阴影底板一起画，颜色带 alpha 时这块底板就从圆角外
+ * 透出一片**白色矩形**（统计卡、分类行、底部控件都中过招）。这里改成
+ * `Modifier.shadow` 显式给一组中性阴影色，再单独叠背景层和描边，绕开这个问题。
+ *
+ * 末尾的 [Modifier.clip] 让水波纹和子内容都收在圆角里，阴影因为 `clip = false` 不被切掉。
+ */
+@Composable
+internal fun Modifier.frostedPanel(
+    shape: Shape = RoundedCornerShape(18.dp),
+    elevation: Dp = 12.dp,
+    fill: Color = MaterialTheme.colorScheme.surface,
+    fillAlpha: Float = 0.95f,
+    borderColor: Color? = null,
+    borderWidth: Dp = 1.2.dp,
+): Modifier {
+    val outline = MaterialTheme.colorScheme.outlineVariant
+    // 传了 borderColor 就整圈单色（多选态的警示红），否则用上亮下暗的立体渐变。
+    // 中段和底部都压得很深：容器全透之后，这条灰线是区分按钮边界的唯一依靠。
+    val edge: Brush = borderColor?.let { color ->
+        Brush.verticalGradient(
+            0f to color.copy(alpha = 0.55f),
+            1f to color,
+        )
+    } ?: Brush.verticalGradient(
+        // 上边界也必须是能看见的细线：之前这里用纯白高光，落在浅色背景上等于没有边界，
+        // 按钮顶部完全糊在页面里（用户反馈「按钮上边界无法辨认」）。
+        // 整圈都用 outlineVariant，只靠深浅做立体：上浅 → 中深 → 底最深。
+        0f to outline.copy(alpha = 0.62f),
+        0.45f to outline.copy(alpha = 0.82f),
+        1f to outline.copy(alpha = 0.95f),
+    )
+    return this
+        .shadow(
+            elevation = elevation,
+            shape = shape,
+            clip = false,
+            ambientColor = Color(0x14000000),
+            // 主阴影略收、方向明确：面板浮起来的同时底缘不会糊成一片灰
+            spotColor = Color(0x2B000000),
+        )
+        .background(fill.copy(alpha = fillAlpha), shape)
+        .border(borderWidth, edge, shape)
+        .clip(shape)
+}
+
+/**
  * 统一开关样式（自绘，不直接用 Material3 的 Switch）。
  *
  * 不用原生 Switch 的两个原因：
@@ -336,7 +395,7 @@ private fun InputBoxShell(
  * 尺寸沿用 M3 的比例：轨道 52×32dp、圆点直径 24dp、圆点四周留 4dp。
  */
 @Composable
-fun AppSwitch(
+internal fun AppSwitch(
     checked: Boolean,
     onCheckedChange: ((Boolean) -> Unit)?,
     modifier: Modifier = Modifier,

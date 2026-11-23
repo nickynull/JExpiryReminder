@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -69,6 +70,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -161,13 +163,13 @@ fun CategoryScreen(onBack: () -> Unit) {
             )
         },
     ) { padding ->
-        Column(
-            Modifier
-                .padding(padding)
-                .fillMaxSize()
-                .imePadding(),
-        ) {
-            Text(
+    Box(
+        Modifier
+            .padding(padding)
+            .fillMaxSize(),
+    ) {
+        Column(Modifier.fillMaxSize().imePadding()) {
+        Text(
                 "长按分类可拖动排序；点整行改名，点左侧圆点换颜色；右上角设新增时的默认提醒",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -196,46 +198,52 @@ fun CategoryScreen(onBack: () -> Unit) {
                 },
                 onReorder = { ids -> scope.launch { store.reorderCategories(context, ids) } },
                 modifier = Modifier.weight(1f),
+                bottomPad = 92.dp,
             )
+        }
 
-            // 新增区钉在底部，键盘弹出时跟着抬起
-            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+        // 新增区悬浮胶囊：与首页/编辑页同一套磨砂浮起，列表从它下面穿过；
+        // navigationBarsPadding 抬到手势横条之上，imePadding 让键盘弹起时跟着上移
+        Column(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .frostedPanel(RoundedCornerShape(20.dp))
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // 与首页搜索、编辑页字段同款：48dp 高、10dp 圆角，带一键清空
+                InputBox(
+                    value = newLabel,
+                    onValueChange = { newLabel = it; newError = null },
+                    placeholder = "新增分类名称",
+                    fixedHeight = 48.dp,
+                    showClear = true,
+                    isError = newError != null,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(10.dp))
+                Button(
+                    onClick = ::submitNew,
+                    enabled = newLabel.isNotBlank(),
+                    modifier = Modifier.height(48.dp),
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // 与首页搜索、编辑页字段同款：48dp 高、10dp 圆角，带一键清空
-                        InputBox(
-                            value = newLabel,
-                            onValueChange = { newLabel = it; newError = null },
-                            placeholder = "新增分类名称",
-                            fixedHeight = 48.dp,
-                            showClear = true,
-                            isError = newError != null,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Button(
-                            onClick = ::submitNew,
-                            enabled = newLabel.isNotBlank(),
-                            modifier = Modifier.height(48.dp),
-                        ) {
-                            Text("添加")
-                        }
-                    }
-                    // 错误文案放到框外，输入框本身不被撑高、两行内容也不会一起跳
-                    newError?.let { msg ->
-                        Text(
-                            msg,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(start = 12.dp, top = 4.dp),
-                        )
-                    }
+                    Text("添加")
                 }
             }
+            // 错误文案放到框外，输入框本身不被撑高、两行内容也不会一起跳
+            newError?.let { msg ->
+                Text(
+                    msg,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(start = 12.dp, top = 4.dp),
+                )
+            }
+        }
         }
     }
 
@@ -453,6 +461,7 @@ private fun CategoryList(
     onDelete: (CategoryDef, Int) -> Unit,
     onReorder: (List<String>) -> Unit,
     modifier: Modifier = Modifier,
+    bottomPad: Dp = 4.dp,
 ) {
     val density = LocalDensity.current
     // 一格 = 行高 + 行间距：跨过一格就换位，被拖行与让位行的位移都用这个值
@@ -517,7 +526,7 @@ private fun CategoryList(
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = bottomPad),
         verticalArrangement = Arrangement.spacedBy(ROW_GAP),
     ) {
         itemsIndexed(rows, key = { _, cat -> cat.id }) { index, cat ->

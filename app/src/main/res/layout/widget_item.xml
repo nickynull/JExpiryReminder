@@ -32,6 +32,8 @@
             android:orientation="vertical"
             android:paddingStart="10dp">
 
+            <!-- 名字 + 行内类型标注（循环/倒计时）：标注由 Service 用 Span 拼进同一文本，
+                 永远紧贴名字尾部，长名字与标注一起省略号截断，位置天然对称 -->
             <TextView
                 android:id="@+id/widget_item_name"
                 android:layout_width="match_parent"
@@ -53,7 +55,7 @@
                 android:textSize="11sp" />
         </LinearLayout>
 
-        <!-- 不是待办，去掉勾选框；右侧改为「剩余天数 + 到期日期」两行 -->
+        <!-- 右侧「剩余天数 + 到期日期」两行 -->
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

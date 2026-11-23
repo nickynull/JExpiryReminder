@@ -12,6 +12,10 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 流体云 / Android 16 Live Updates：非运行时权限，仅用于把 7 天内到期汇总提升为胶囊，
+         不涉及任何隐私数据；系统不支持或用户在设置里关闭时自动降级为普通通知。 -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+
     <!--
       精确闹钟：
       USE_EXACT_ALARM（API 33+）安装即授予、用户不可撤销。targetSdk 33+ 的新装应用在
@@ -33,7 +37,10 @@
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
-        android:allowBackup="true">
+        android:enableOnBackInvokedCallback="true"
+        android:allowBackup="false"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules">
 
         <!--
           singleTop：长按桌面图标的快捷方式启动时，应用若已在前台就复用当前实例、
@@ -95,7 +102,6 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/expiry_widget_small" />
         </receiver>
-
         <receiver
             android:name=".widget.ExpiryWidgetMedium"
             android:exported="true"
@@ -107,7 +113,6 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/expiry_widget_medium" />
         </receiver>
-
         <receiver
             android:name=".widget.ExpiryWidgetLarge"
             android:exported="true"

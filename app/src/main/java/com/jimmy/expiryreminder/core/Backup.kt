@@ -2,6 +2,7 @@ package com.jimmy.expiryreminder.core
 
 import android.content.Context
 import android.net.Uri
+import com.jimmy.expiryreminder.BuildConfig
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -79,7 +80,10 @@ object Backup {
         val dataFile = ImageStore.dataFile(context)
         dataFile.parentFile?.mkdirs()
         if (!dataFile.exists()) {
-            dataFile.writeText(JSONObject().put("version", 1).put("items", JSONArray()).toString())
+            AtomicFiles.writeText(
+                dataFile,
+                JSONObject().put("version", 1).put("items", JSONArray()).toString(),
+            )
         }
 
         context.contentResolver.openOutputStream(uri)?.use { rawOut ->
@@ -98,7 +102,7 @@ object Backup {
                 val manifest = Manifest(
                     app = APP_NAME,
                     schema = 1,
-                    appVersion = "1.0.0",
+                    appVersion = BuildConfig.VERSION_NAME,
                     exportedAt = Dates.nowIsoTimestamp(),
                     modules = listOf("expiry"),
                 )
@@ -139,23 +143,47 @@ object Backup {
     fun parseFrom(context: Context, uri: Uri): ParsedBackup {
         val files = LinkedHashMap<String, ByteArray>()
         var manifest: Manifest? = null
+        var total = 0L
+        var entries = 0
         context.contentResolver.openInputStream(uri)?.use { rawIn ->
             ZipInputStream(rawIn.buffered()).use { zip ->
                 while (true) {
                     val entry = zip.nextEntry ?: break
-                    if (!entry.isDirectory) {
-                        val bytes = zip.readBytes()
-                        if (entry.name == "manifest.json") {
-                            manifest = Manifest.fromJson(
-                                try {
-                                    JSONObject(String(bytes, Charsets.UTF_8))
-                                } catch (_: Exception) {
-                                    null
-                                }
-                            )
-                        } else {
-                            files[entry.name] = bytes
-                        }
+                    if (entry.isDirectory) {
+                        zip.closeEntry()
+                        continue
+                    }
+                    // 三个边界缺一不可：条目数（防海量小文件）、单条（防大图）、总量（防炸弹）
+                    if (++entries > IoLimits.MAX_BACKUP_ENTRIES) {
+                        throw BackupException("备份内文件数量超出上限（最多 ${IoLimits.MAX_BACKUP_ENTRIES} 个）")
+                    }
+                    if (entry.size > IoLimits.MAX_BACKUP_ENTRY) {
+                        throw BackupException("备份内单个文件过大，可能不是本应用导出的备份")
+                    }
+                    val max = if (entry.name == "manifest.json") {
+                        IoLimits.MAX_MANIFEST
+                    } else {
+                        IoLimits.MAX_BACKUP_ENTRY
+                    }
+                    val bytes = try {
+                        IoLimits.readLimited(zip, max)
+                    } catch (_: IoLimits.TooLargeException) {
+                        throw BackupException("备份内单个文件过大，可能不是本应用导出的备份")
+                    }
+                    total += bytes.size
+                    if (total > IoLimits.MAX_BACKUP_TOTAL) {
+                        throw BackupException("备份解压后超出大小上限，可能不是正常备份文件")
+                    }
+                    if (entry.name == "manifest.json") {
+                        manifest = Manifest.fromJson(
+                            try {
+                                JSONObject(String(bytes, Charsets.UTF_8))
+                            } catch (_: Exception) {
+                                null
+                            }
+                        )
+                    } else {
+                        files[entry.name] = bytes
                     }
                     zip.closeEntry()
                 }
@@ -207,11 +235,11 @@ object Backup {
         }
 
         if (mode == ImportMode.replace) {
-            // 整目录替换：先清空数据与图片，避免旧图片变成没人引用的孤儿文件
-            store.clearItems(context)
+            // 先原子写新 data.json（旧文件自动留 .bak），再重建图片目录。
+            // 反过来的话中途失败会既清空数据又清空图片，等于把用户的家底删了。
+            AtomicFiles.writeText(ImageStore.dataFile(context), dataJson)
             ImageStore.clearExceptData(context)
             writeImages()
-            ImageStore.dataFile(context).writeText(dataJson)
             store.reload(context)
         } else {
             // 合并：图片按文件名落盘，data.json 走 id 级合并
@@ -232,7 +260,7 @@ object Backup {
                     // 解析失败退化为直接覆盖
                 }
             }
-            ImageStore.dataFile(context).writeText(dataJson)
+            AtomicFiles.writeText(ImageStore.dataFile(context), dataJson)
             store.reload(context)
         }
         return ImportResult(

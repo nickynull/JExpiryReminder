@@ -23,6 +23,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.AnchoredDraggableState
+import androidx.compose.foundation.gestures.DraggableAnchors
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.anchoredDraggable
+import androidx.compose.foundation.gestures.animateTo
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +45,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
@@ -55,12 +61,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
@@ -73,11 +81,8 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -90,13 +95,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.draw.drawBehind
@@ -105,18 +110,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -125,17 +133,37 @@ import com.jimmy.expiryreminder.core.ExpiryItem
 import com.jimmy.expiryreminder.core.ExpiryStatus
 import com.jimmy.expiryreminder.core.ExpiryStore
 import com.jimmy.expiryreminder.core.SettingsStore
+import com.jimmy.expiryreminder.core.ShelfLifeUnit
 import com.jimmy.expiryreminder.core.Spaces
 import com.jimmy.expiryreminder.core.remindDaysSummary
 import com.jimmy.expiryreminder.notify.ReminderService
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /** 备注里的换行、制表、连续空格：列表只显示一行，先压成单个空格。 */
 private val SINGLE_LINE_WS = Regex("\\s+")
 
+/** 列表行左滑的三个沉降点：原位 / 中段（归档）/ 滑满（删除）。 */
+private enum class RowSwipeStage { Settled, Archive, Delete }
+
+/** 左滑沉降后的待确认动作：[delete] 为真表示停在删除段，否则是归档段。 */
+private data class SwipeAsk(val item: ExpiryItem, val delete: Boolean)
+
+/** 归档段底色：与「7 天内到期」状态色同源的黄，保持现配色。 */
+private val ArchiveSwipeColor = Color(0xFFE6A23C)
+
 /**
- * 首页筛选状态（搜索词 + 分类 + 空间）：由导航层持有，进出编辑页后回来仍保留。
+ * 左滑进度达到这个比例后，底色与文案从「归档」切换为「删除」。
+ *
+ * 必须与两个锚点的沉降分界一致：Archive = -0.45w、Delete = -0.94w，
+ * AnchoredDraggable 默认在相邻锚点中点判定，即 0.695w。取 0.70 让「看到红色 = 松手就删」
+ * 成立；否则 0.62~0.695 这一段显示「删除」却会落到归档，视觉与结果对不上。
+ */
+private const val SwipeDeleteSwitchFrac = 0.70f
+
+/**
+ * 首页筛选状态（搜索词 + 分类 + 空间 + 列表模式）：由导航层持有，进出编辑页后回来仍保留。
  * 用 listSaver 存字符串，进程被回收再恢复也不丢。
  */
 @Stable
@@ -143,22 +171,29 @@ class HomeFilterState(
     keyword: String = "",
     category: String = "all",
     space: String = Spaces.ALL,
+    listMode: String = MODE_COUNTDOWN,
 ) {
     var keyword by mutableStateOf(keyword)
     var category by mutableStateOf(category)
     /** 当前空间：列表、统计卡、分类计数都按它过滤；默认「全部空间」，含未分配。 */
     var space by mutableStateOf(space)
+    /** 当前列表：倒计时（普通物品）/ 循环任务，按 repeatEnabled 区分；默认倒计时。 */
+    var listMode by mutableStateOf(listMode)
 
     companion object {
         const val ALL = "all"
+        const val MODE_COUNTDOWN = "countdown"
+        const val MODE_CYCLE = "cycle"
 
         val Saver = listSaver<HomeFilterState, String>(
-            save = { listOf(it.keyword, it.category, it.space) },
+            save = { listOf(it.keyword, it.category, it.space, it.listMode) },
             restore = {
                 HomeFilterState(
                     keyword = it.getOrElse(0) { "" },
                     category = it.getOrElse(1) { ALL },
                     space = it.getOrElse(2) { Spaces.ALL },
+                    // 旧存档没有第 4 项，回落到倒计时，保证升级后不空白
+                    listMode = it.getOrElse(3) { MODE_COUNTDOWN },
                 )
             },
         )
@@ -181,6 +216,10 @@ private data class ViewerState(
 @Composable
 fun HomeScreen(
     filter: HomeFilterState,
+    /** 归档模式：复用整页结构，列表换成已归档物品（统计卡/列表切换/空间筛选/新增入口不适用，一律隐藏）。 */
+    archivedMode: Boolean = false,
+    /** 非空时标题左侧显示返回入口（归档页作为二级页用）；主页传 null。 */
+    onBack: (() -> Unit)? = null,
     /** [defaultCategory] / [defaultSpace] 为当前筛选的分类与空间，无筛选时传 null。 */
     onAdd: (defaultCategory: String?, defaultSpace: String?) -> Unit,
     /** 图像识别入口：选图 → 识别 → 带结果进添加页。 */
@@ -190,6 +229,8 @@ fun HomeScreen(
     onCategories: () -> Unit,
     /** 空间管理页。 */
     onSpaces: () -> Unit,
+    /** 归档页：查看已归档物品，可调回。 */
+    onArchive: () -> Unit,
     /** 多选「分享」：把选中的物品带到跨设备传输页。 */
     onShare: (List<String>) -> Unit,
 ) {
@@ -200,12 +241,12 @@ fun HomeScreen(
     val notifyEnabled by settings.notifyEnabled.collectAsStateWithLifecycle()
     val notifyTime by settings.notifyTime.collectAsStateWithLifecycle()
     val useAlarmClock by settings.useAlarmClock.collectAsStateWithLifecycle()
+    val liveUpdateEnabled by settings.liveUpdateEnabled.collectAsStateWithLifecycle()
     val statCards by settings.statCards.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     var selectMode by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf(setOf<String>()) }
-    var pendingDelete by remember { mutableStateOf<ExpiryItem?>(null) }
     // 多选批量操作弹窗
     var batchSpaceDialog by remember { mutableStateOf(false) }
     var batchCategoryDialog by remember { mutableStateOf(false) }
@@ -216,6 +257,14 @@ fun HomeScreen(
     var spaceMenuOpen by remember { mutableStateOf(false) }
     // 全屏图片查看器：图片路径 + 起始下标 + 发起点击的缩略图位置，null = 未打开
     var viewer by remember { mutableStateOf<ViewerState?>(null) }
+    // 左滑确认：行只上报「停在归档段/删除段」，确认框在页面层弹（行被回收也不会丢）
+    var swipeAsk by remember { mutableStateOf<SwipeAsk?>(null) }
+    // 每次关框自增一次，驱动停在确认位的那一行回弹
+    var swipeResetToken by remember { mutableIntStateOf(0) }
+    val closeSwipeAsk = {
+        swipeAsk = null
+        swipeResetToken += 1
+    }
 
     // 只在多选态拦截返回；主页本身不拦截，交给系统处理，
     // 这样「返回桌面」才能走 ColorOS 的预测性返回动画（缩小到桌面图标）。
@@ -228,7 +277,7 @@ fun HomeScreen(
     LaunchedEffect(state.items, notifyEnabled, notifyTime, useAlarmClock) {
         if (state.loaded) {
             ReminderService.syncScheduled(
-                context, store, notifyEnabled, notifyTime, useAlarmClock,
+                context, store, notifyEnabled, notifyTime, useAlarmClock, liveUpdateEnabled,
             )
         }
     }
@@ -251,33 +300,58 @@ fun HomeScreen(
         }
     }
 
-    // 先只按当前空间 + 搜索词筛一遍：下拉里的分类计数 = 点进去后能看到的条数，与统计卡「全部」同一口径
-    val spaceItems = remember(state, filter.space) { store.itemsInSpace(filter.space) }
-    val keywordMatched = remember(spaceItems, filter.keyword) {
-        val kw = filter.keyword.trim().lowercase()
+    // 先只按当前空间 + 搜索词筛一遍：下拉里的分类计数 = 点进去后能看到的条数，与统计卡「全部」同一口径。
+    // 归档模式换成该空间下的已归档物品；搜索入口在归档模式下不显示，关键字忽略。
+    val spaceItems = remember(state, filter.space, archivedMode) {
+        if (archivedMode) store.archivedItemsInSpace(filter.space)
+        else store.itemsInSpace(filter.space)
+    }
+    // 空间下拉里的条数：与列表同口径（排除归档）；归档页按归档物品计数
+    val spaceCount: (String) -> Int =
+        if (archivedMode) store::archivedCountInSpace else store::activeCountInSpace
+    val effectiveKeyword = if (archivedMode) "" else filter.keyword
+    val keywordMatched = remember(spaceItems, effectiveKeyword) {
+        val kw = effectiveKeyword.trim().lowercase()
         spaceItems.filter { item ->
             kw.isEmpty() || item.name.lowercase().contains(kw) || item.note.lowercase().contains(kw)
         }
     }
-    val categoryCounts = remember(keywordMatched) {
-        keywordMatched.groupingBy { it.category }.eachCount()
+    // 列表模式分流：倒计时 = 非循环物品，循环任务 = repeatEnabled。
+    // 列表、统计卡、分类计数、全选都以 modeMatched 为同一口径——切到哪个列表就只看哪一类。
+    // 归档模式不分倒计时/循环（切换器不显示），全部一起看。
+    val isCycleMode = !archivedMode && filter.listMode == HomeFilterState.MODE_CYCLE
+    val modeMatched = remember(keywordMatched, isCycleMode, archivedMode) {
+        // 归档模式不切列表模式，循环/倒计时物品一起看
+        if (archivedMode) keywordMatched
+        else keywordMatched.filter { it.repeatEnabled == isCycleMode }
     }
-    val filtered = remember(keywordMatched, filter.category) {
-        if (filter.category == HomeFilterState.ALL) keywordMatched
-        else keywordMatched.filter { it.category == filter.category }
+    val cycleCount = remember(spaceItems) { spaceItems.count { it.repeatEnabled } }
+    val countdownCount = remember(spaceItems) { spaceItems.count { !it.repeatEnabled } }
+    val categoryCounts = remember(modeMatched) {
+        modeMatched.groupingBy { it.category }.eachCount()
+    }
+    val filtered = remember(modeMatched, filter.category) {
+        if (filter.category == HomeFilterState.ALL) modeMatched
+        else modeMatched.filter { it.category == filter.category }
     }
     val grouped = remember(filtered) {
         // 按状态固定顺序输出非空分组
         val byStatus = filtered.groupBy { store.statusOf(it) }
         ExpiryStatus.entries.mapNotNull { s -> byStatus[s]?.let { s to it } }
     }
+    // 列表分区：主页按到期状态分组；归档页不分组——物品已不再提醒，
+    // 再套「已过期 / 7 天内到期」的标题会让人误以为还在催，按到期日单列表更直白
+    val sections: List<Pair<ExpiryStatus?, List<ExpiryItem>>> = remember(grouped, archivedMode) {
+        if (archivedMode) listOf(null to filtered) else grouped.map { it.first to it.second }
+    }
     val categoryLabel = if (filter.category == HomeFilterState.ALL) "全部分类"
     else store.categoryOptions().firstOrNull { it.id == filter.category }?.label ?: "全部分类"
 
-    // 可左右切换的分类环 =「全部分类」+ 当前空间下至少有一条未归档记录的分类。
-    // 空分类不进环，滑动不会切出一片空白；这里刻意不跟搜索词联动，避免搜索时环忽长忽短。
-    val switchableIds = remember(spaceItems) {
-        val counts = spaceItems.groupingBy { it.category }.eachCount()
+    // 可左右切换的分类环 =「全部分类」+ 当前列表下至少有一条记录的分类。
+    // 空分类不进环，滑动不会切出一片空白；这里刻意不跟搜索词联动，避免搜索时环忽长忽短，
+    // 但跟随列表模式——切到循环任务后，环里只保留循环任务实际用到的分类。
+    val switchableIds = remember(modeMatched) {
+        val counts = modeMatched.groupingBy { it.category }.eachCount()
         buildList {
             add(HomeFilterState.ALL)
             store.categoryOptions().forEach { if ((counts[it.id] ?: 0) > 0) add(it.id) }
@@ -292,9 +366,9 @@ fun HomeScreen(
     val slideShiftPx = with(LocalDensity.current) { 64.dp.toPx() }
     // 首次进页面不播动画（否则一进来列表就滑一下）
     var firstComposition by remember { mutableStateOf(true) }
-    // 每换一次分类就新建一个从 ±1 起跳的 Animatable：起始偏移在组合期就位，
+    // 每换一次分类或列表模式就新建一个从 ±1 起跳的 Animatable：起始偏移在组合期就位，
     // 不会出现「先按最终位置画一帧、再跳回去滑进来」的闪一下
-    val slide = remember(filter.category) {
+    val slide = remember(filter.category, filter.listMode) {
         Animatable(if (firstComposition) 0f else slideDir.toFloat())
     }
     LaunchedEffect(slide) {
@@ -324,12 +398,35 @@ fun HomeScreen(
         filter.category = id
     }
 
-    // 真的换了分类才回顶部；从编辑页返回时保留原来的滚动位置
+    // 列表模式切换：倒计时 → 循环任务从右滑进，反之从左滑进。
+    // 切过去后当前分类如果在新列表里没有记录，回落到「全部分类」，避免切出一片空白；
+    // 同时退出多选，防止把另一类物品带进批量操作。
+    val switchListMode: (String) -> Unit = { mode ->
+        if (mode != filter.listMode) {
+            slideDir = if (mode == HomeFilterState.MODE_CYCLE) 1 else -1
+            filter.listMode = mode
+            if (selectMode) {
+                selectMode = false
+                selected = emptySet()
+            }
+            // 这里 listMode 刚更新、modeMatched 还是旧组合的缓存，
+            // 故直接按新模式从 spaceItems 判断当前分类是否还有记录
+            val nextIsCycle = mode == HomeFilterState.MODE_CYCLE
+            if (filter.category != HomeFilterState.ALL &&
+                spaceItems.none { it.repeatEnabled == nextIsCycle && it.category == filter.category }
+            ) {
+                filter.category = HomeFilterState.ALL
+            }
+        }
+    }
+
+    // 真的换了分类或列表模式才回顶部；从编辑页返回时保留原来的滚动位置
     val listState = rememberLazyListState()
-    var scrolledCategory by remember { mutableStateOf(filter.category) }
-    LaunchedEffect(filter.category) {
-        if (scrolledCategory != filter.category) {
-            scrolledCategory = filter.category
+    var scrolledKey by remember { mutableStateOf(filter.category + "|" + filter.listMode) }
+    val currentScrollKey = filter.category + "|" + filter.listMode
+    LaunchedEffect(currentScrollKey) {
+        if (scrolledKey != currentScrollKey) {
+            scrolledKey = currentScrollKey
             if (filtered.isNotEmpty()) listState.scrollToItem(0)
         }
     }
@@ -343,7 +440,7 @@ fun HomeScreen(
         it != Spaces.ALL && it.isNotEmpty() && store.spaceOf(it) != null
     }
 
-    // ------------------------------- 顶部毛玻璃 / 底部浮动：高度测量与滚动进度
+    // ------------------------------- 顶部磨砂 / 底部浮动：高度测量与滚动进度
     val density = LocalDensity.current
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -373,7 +470,12 @@ fun HomeScreen(
     }
     // 底部浮动条高度是固定 dp（28dp 上内边距（含 16dp 渐隐带）+ 56dp 按钮 + 12dp 下内边距 = 96dp），
     // 不随字号变化，所以直接算常量，省一次测量回调；再留 16dp 余量，最后一条不会贴到按钮上
-    val bottomContentPadding = if (selectMode) 16.dp else navBottom + 112.dp
+    // 归档模式没有底部浮动条，只留导航栏 + 少量余量
+    val bottomContentPadding = when {
+        selectMode -> 16.dp
+        archivedMode -> navBottom + 24.dp
+        else -> navBottom + 112.dp
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -407,129 +509,167 @@ fun HomeScreen(
             // 只有列表在这条 LazyColumn 里滚；标题、统计卡、分类行都是上方固定块。
             // 这块列表同时是毛玻璃的「取景源」：标题带和下面每颗玻璃按钮都从这里抓像素做模糊。
             //
-            // 外层按分类 key：切分类时整块列表节点连同它内部的 item 动画器一起重建。
-            // 不这样做的话，旧分类的行会在 animateItem 的消失动画里被动画器继续持有并绘制，
+            // 外层按分类 + 列表模式 key：切换时整块列表节点连同它内部的 item 动画器一起重建。
+            // 不这样做的话，旧行会在 animateItem 的消失动画里被动画器继续持有并绘制，
             // 新分类的卡片只盖住大部分，卡片之间的空隙里会露出上一屏的行（表现为「残留」）。
-            key(filter.category) {
-                LazyColumn(
-                    Modifier
-                        .fillMaxSize()
-                        .categorySlide({ slide.value }, slideShiftPx)
-                        // 整页右滑切上一个分类；左滑不接管，列表行照旧左滑删除
-                        .swipeRightToSwitchCategory { if (!selectMode) switchCategory(-1) },
-                    state = listState,
-                    contentPadding = PaddingValues(
-                        start = 16.dp,
-                        end = 16.dp,
-                        top = topContentPadding,
-                        bottom = bottomContentPadding,
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    // ---------------------------------------------- 列表 / 空态
-                    if (filtered.isEmpty()) {
-                        // 空态与列表共用同一套进场动画，切到没有记录的分类时同样有「翻过去了」的反馈
-                        item(key = "empty") {
-                            Box(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .fillParentMaxHeight(0.66f),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Box(
-                                        Modifier
-                                            .size(64.dp)
-                                            .background(
-                                                MaterialTheme.colorScheme.surfaceVariant, CircleShape,
-                                            ),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Icon(
-                                            Icons.Filled.DateRange,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.outline,
-                                            modifier = Modifier.size(28.dp),
-                                        )
-                                    }
-                                    Spacer(Modifier.height(12.dp))
-                                    Text(
-                                        if (state.loaded) "暂无物品" else "加载中…",
-                                        style = MaterialTheme.typography.titleMedium,
-                                    )
-                                    if (state.loaded) {
-                                        Spacer(Modifier.height(4.dp))
-                                        Text(
-                                            "点底部 + 添加第一件物品",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        grouped.forEach { (status, items) ->
-                            item(key = "header_${status.name}") {
-                                Row(
-                                    Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
+            key(archivedMode, filter.category, filter.listMode) {
+            LazyColumn(
+                Modifier
+                    .fillMaxSize()
+                    .categorySlide({ slide.value }, slideShiftPx)
+                    // 整页右滑切上一个分类；左滑不接管，列表行照旧左滑删除
+                    .swipeRightToSwitchCategory { if (!selectMode) switchCategory(-1) },
+                state = listState,
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = topContentPadding,
+                    bottom = bottomContentPadding,
+                ),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                // ---------------------------------------------- 列表 / 空态
+                if (filtered.isEmpty()) {
+                    // 空态与列表共用同一套进场动画，切到没有记录的分类时同样有「翻过去了」的反馈
+                    item(key = "empty") {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .fillParentMaxHeight(0.66f),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Box(
+                                    Modifier
+                                        .size(64.dp)
+                                        .background(
+                                            MaterialTheme.colorScheme.surfaceVariant, CircleShape,
+                                        ),
+                                    contentAlignment = Alignment.Center,
                                 ) {
-                                    Box(
-                                        Modifier
-                                            .size(8.dp)
-                                            .background(hexColor(status.color), CircleShape),
-                                    )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        status.label,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Spacer(Modifier.weight(1f))
-                                    Text(
-                                        "${items.size}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    Icon(
+                                        Icons.Filled.DateRange,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.outline,
+                                        modifier = Modifier.size(28.dp),
                                     )
                                 }
-                            }
-                            items(items.size, key = { items[it].id }) { index ->
-                                val item = items[index]
-                                // 新增/删除/移动时条目自带位移动画，接近流体动效的连续感。
-                                // 但不要淡出：切分类时整批行会同时消失，消失动画会让旧行在
-                                // 卡片之间的空隙里多留一会儿（表现为上一屏的行「残留」）
-                                Box(Modifier.animateItem(fadeOutSpec = null)) {
-                                    ItemRow(
-                                        item = item,
-                                        store = store,
-                                        selectMode = selectMode,
-                                        selected = item.id in selected,
-                                        showSpace = filter.space == Spaces.ALL,
-                                        onClick = {
-                                            if (selectMode) {
-                                                selected =
-                                                    if (item.id in selected) selected - item.id
-                                                    else selected + item.id
-                                            } else onEdit(item.id)
+                                Spacer(Modifier.height(12.dp))
+                                Text(
+                                    when {
+                                        !state.loaded -> "加载中…"
+                                        archivedMode -> "暂无归档物品"
+                                        else -> if (isCycleMode) "暂无循环任务" else "暂无倒计时物品"
+                                    },
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                if (state.loaded) {
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        when {
+                                            archivedMode -> "在首页左滑列表项到「归档」即可归档"
+                                            isCycleMode -> "点底部 + 添加，并在编辑页打开「循环任务」"
+                                            else -> "点底部 + 添加第一件物品"
                                         },
-                                        onLongClick = {
-                                            if (!selectMode) {
-                                                selectMode = true
-                                                selected = setOf(item.id)
-                                            }
-                                        },
-                                        onSwipeDelete = { pendingDelete = item },
-                                        onViewImages = { origin ->
-                                            viewer = ViewerState(item.images.map { it.path }, 0, origin)
-                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                             }
                         }
                     }
+                } else {
+                    sections.forEach { (status, items) ->
+                        // 归档页 status 为 null：不画分组标题，直接铺卡片
+                        if (status != null) item(key = "header_${status.name}") {
+                            Row(
+                                Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Box(
+                                    Modifier
+                                        .size(8.dp)
+                                        .background(hexColor(status.color), CircleShape),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    status.label,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.weight(1f))
+                                Text(
+                                    "${items.size}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        items(items.size, key = { items[it].id }) { index ->
+                            val item = items[index]
+                            // 新增/删除/移动时条目自带位移动画，接近流体动效的连续感。
+                            // 但不要淡出：切分类时整批行会同时消失，消失动画会让旧行在
+                            // 卡片之间的空隙里多留一会儿（表现为上一屏的行「残留」）
+                            Box(Modifier.animateItem(fadeOutSpec = null)) {
+                                ItemRow(
+                                    item = item,
+                                    store = store,
+                                    archivedMode = archivedMode,
+                                    selectMode = selectMode,
+                                    selected = item.id in selected,
+                                    // 「全部空间」下显示归属空间，选定某个空间后行内不再重复
+                                    showSpace = filter.space == Spaces.ALL,
+                                    onClick = {
+                                        if (selectMode) {
+                                            selected =
+                                                if (item.id in selected) selected - item.id
+                                                else selected + item.id
+                                        } else onEdit(item.id)
+                                    },
+                                    onLongClick = {
+                                        if (!selectMode && !archivedMode) {
+                                            selectMode = true
+                                            selected = setOf(item.id)
+                                        }
+                                    },
+                                    // 沉降到确认位只上报，确认框由页面层统一弹
+                                    onAskSwipe = { delete -> swipeAsk = SwipeAsk(item, delete) },
+                                    swipeResetToken = swipeResetToken,
+                                    onRestore = {
+                                        scope.launch {
+                                            store.setItemsArchived(context, listOf(item.id), false)
+                                            Toast.makeText(
+                                                context, "已调回「${item.name}」", Toast.LENGTH_SHORT,
+                                            ).show()
+                                        }
+                                    },
+                                    onCompleteCycle = {
+                                        scope.launch {
+                                            val next = store.completeCycle(context, item.id)
+                                            if (next != null) {
+                                                Toast.makeText(
+                                                    context, "已完成本次，下次到期 $next",
+                                                    Toast.LENGTH_SHORT,
+                                                ).show()
+                                            } else {
+                                                // 当天重复点击或无需推进：给出反馈而不是静默
+                                                Toast.makeText(
+                                                    context, "今天已经完成过本次了",
+                                                    Toast.LENGTH_SHORT,
+                                                ).show()
+                                            }
+                                        }
+                                    },
+                                    onViewImages = { origin ->
+                                        viewer = ViewerState(item.images.map { it.path }, 0, origin)
+                                    },
+                                )
+                            }
+                        }
+                    }
                 }
             }
+            } // key(archivedMode, filter.category, filter.listMode)
 
             // ---------------------------------------------- 顶部固定遮罩（渐变淡出）
             // 固定在页面顶部：实心部分盖住标题与统计卡（挡住滚上来的卡片）。
@@ -615,16 +755,42 @@ fun HomeScreen(
                                 Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
+                                // 归档页是二级页：左上给一颗与其它胶囊同款的返回键，
+                                // 不再只依赖系统返回/左缘手势（那是唯一没有可见返回入口的页面）
+                                if (onBack != null) {
+                                    Box(
+                                        Modifier
+                                            .height(40.dp)
+                                            .frostedPanel()
+                                            .clickable(onClick = onBack),
+                                    ) {
+                                        Row(
+                                            Modifier
+                                                .fillMaxHeight()
+                                                .padding(horizontal = 7.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Icon(
+                                                Icons.AutoMirrored.Filled.ArrowBack,
+                                                contentDescription = "返回",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        }
+                                    }
+                                    Spacer(Modifier.width(8.dp))
+                                }
                                 Text(
-                                    "到期提醒",
+                                    if (archivedMode) "归档" else "到期提醒",
                                     style = MaterialTheme.typography.headlineMedium,
                                     fontWeight = FontWeight.Bold,
                                     modifier = Modifier.weight(1f),
                                 )
                                 // 标题块与右侧按钮组之间留固定呼吸位，标题长短都不挤在一起
-                                Spacer(Modifier.width(12.dp))
+                                Spacer(Modifier.width(6.dp))
                                 // 空间切换：当前空间名 + 下拉（同时是空间管理的入口）。
                                 // 与分类行三颗按钮同款毛玻璃：同一屏里只保留一种按钮语言。
+                                // 归档模式同样支持按空间筛选（只统计已归档物品）。
                                 Box {
                                     Box(
                                         Modifier
@@ -635,7 +801,7 @@ fun HomeScreen(
                                         Row(
                                             Modifier
                                                 .fillMaxHeight()
-                                                .padding(horizontal = 12.dp),
+                                                .padding(horizontal = 8.dp),
                                             verticalAlignment = Alignment.CenterVertically,
                                         ) {
                                             Box(
@@ -652,14 +818,14 @@ fun HomeScreen(
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
-                                                modifier = Modifier.widthIn(max = 84.dp),
+                                                modifier = Modifier.widthIn(max = 64.dp),
                                             )
                                             Spacer(Modifier.width(2.dp))
                                             Icon(
                                                 Icons.Filled.KeyboardArrowDown,
                                                 contentDescription = "切换空间",
                                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.size(16.dp),
+                                                modifier = Modifier.size(14.dp),
                                             )
                                         }
                                     }
@@ -679,7 +845,7 @@ fun HomeScreen(
                                                     )
                                                 )
                                             },
-                                            trailingIcon = { CountBadge(store.itemCountInSpace(Spaces.ALL)) },
+                                            trailingIcon = { CountBadge(spaceCount(Spaces.ALL)) },
                                             onClick = {
                                                 if (filter.space != Spaces.ALL) {
                                                     filter.space = Spaces.ALL
@@ -700,7 +866,7 @@ fun HomeScreen(
                                                     )
                                                 },
                                                 trailingIcon = {
-                                                    CountBadge(store.itemCountInSpace(space.id))
+                                                    CountBadge(spaceCount(space.id))
                                                 },
                                                 onClick = {
                                                     if (filter.space != space.id) {
@@ -724,7 +890,7 @@ fun HomeScreen(
                                                     )
                                                 )
                                             },
-                                            trailingIcon = { CountBadge(store.itemCountInSpace("")) },
+                                            trailingIcon = { CountBadge(spaceCount("")) },
                                             onClick = {
                                                 if (filter.space.isNotEmpty()) {
                                                     filter.space = ""
@@ -733,15 +899,20 @@ fun HomeScreen(
                                                 spaceMenuOpen = false
                                             },
                                         )
-                                        androidx.compose.material3.HorizontalDivider()
-                                        DropdownMenuItem(
-                                            text = { Text("按空间分享…") },
-                                            onClick = {
-                                                spaceMenuOpen = false
-                                                shareSpaceDialog = true
-                                            },
-                                        )
-                                        DropdownMenuItem(
+                                        // 按空间分享只在主页提供：归档物品不参与批量分享
+                                        if (!archivedMode) {
+                                            androidx.compose.material3.HorizontalDivider()
+                                            DropdownMenuItem(
+                                                text = { Text("按空间分享…") },
+                                                onClick = {
+                                                    spaceMenuOpen = false
+                                                    shareSpaceDialog = true
+                                                },
+                                            )
+                                        }
+                                        // 空间管理是主页入口：归档页的 HomeScreen 拿不到 onSpaces，
+                                        // 显示出来只会是一个点了没反应的死项
+                                        if (!archivedMode) DropdownMenuItem(
                                             text = { Text("管理空间…") },
                                             onClick = {
                                                 spaceMenuOpen = false
@@ -750,13 +921,36 @@ fun HomeScreen(
                                         )
                                     }
                                 }
-                                // 与「全部空间」胶囊之间留 10dp：两颗都是 40dp 高，视觉上成组但不相连。
-                                Spacer(Modifier.width(10.dp))
-                                // 形状保留圆形（图标钮），玻璃底/亮边与胶囊同款，摆在一起像同一个控件家族
+                                // 归档入口：在「全部空间」右边，同款磨砂浮起（40dp 高）；
+                                // 归档模式已在本页，不再显示入口。
+                                Spacer(Modifier.width(6.dp))
+                                if (!archivedMode) {
+                                    Box(
+                                        Modifier
+                                            .height(40.dp)
+                                            .frostedPanel()
+                                            .clickable(onClick = onArchive),
+                                    ) {
+                                        Row(
+                                            Modifier
+                                                .fillMaxHeight()
+                                                .padding(horizontal = 7.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Text(
+                                                "归档",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                maxLines = 1,
+                                            )
+                                        }
+                                    }
+                                    // 与设置圆钮之间留 6dp
+                                    Spacer(Modifier.width(6.dp))
+                                }
                                 Box(
                                     Modifier
                                         .size(40.dp)
-                                        .frostedPanel(CircleShape)
+                                        .frostedPanel(shape = CircleShape)
                                         .clickable(onClick = onSettings),
                                     contentAlignment = Alignment.Center,
                                 ) {
@@ -770,7 +964,8 @@ fun HomeScreen(
                             }
                             Spacer(Modifier.height(6.dp))
                             Text(
-                                "食品、药品、证件的有效期管理",
+                                if (archivedMode) "已归档的物品不再提醒，可调回或删除"
+                                else "食品、药品、证件的有效期管理",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -780,7 +975,8 @@ fun HomeScreen(
                     }
                 }
                 // ------------------------------------------ 统计卡（数量与种类由设置决定）
-                Row(
+                // 归档模式不适用（「7 天内/已过期」等口径只对未归档列表有意义），隐藏
+                if (!archivedMode) Row(
                     Modifier
                         .fillMaxWidth()
                         .padding(start = 16.dp, end = 16.dp, top = 10.dp),
@@ -800,6 +996,17 @@ fun HomeScreen(
                     }
                 }
 
+                // ------------------------------------------ 列表模式切换：倒计时 / 循环任务
+                // 归档模式不分列表模式，隐藏
+                if (!archivedMode) ListModeSwitcher(
+                    mode = filter.listMode,
+                    countdownCount = countdownCount,
+                    cycleCount = cycleCount,
+                    onChange = switchListMode,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, top = 12.dp),
+                )
 
                 // ------------------------------------------ 分类切换器 + 分类/多选
                 // 这一整行容器完全透明（用户要求，勿回退）：顶部遮罩的淡出带
@@ -814,7 +1021,10 @@ fun HomeScreen(
                             catRowTopPx = it.positionInParent().y.toInt()
                         }
                         .padding(start = 16.dp, end = 16.dp, top = CategoryRowTopPadding),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    // 这一行常规模式放四个控件（分类下拉 / 分类管理 / 多选 + 头部归档入口），
+                    // 间距与内边距都压到 8/10dp，保证窄屏上分类名不会被挤成省略号；
+                    // 归档模式只留分类下拉一颗
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     // 分类下拉：点开菜单直选。切换分类靠整页右滑，这里不再放左右箭头
@@ -828,7 +1038,7 @@ fun HomeScreen(
                             Row(
                                 Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    .padding(horizontal = 10.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 // 容器宽度定死，这里换文字不会引起布局跳动；
@@ -895,14 +1105,14 @@ fun HomeScreen(
                         }
                     }
 
-                    // 分类管理（独立页面）：同款毛玻璃，边框与另外两颗一致
-                    Box(
+                    // 分类管理（独立页面）：与搜索框同一套磨砂浮起效果（归档模式不适用）
+                    if (!archivedMode) Box(
                         Modifier
                             .frostedPanel()
                             .clickable(onClick = onCategories),
                     ) {
                         Row(
-                            Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
@@ -914,10 +1124,10 @@ fun HomeScreen(
                         }
                     }
 
-                    // 多选 / 退出多选（同一颗按钮切换）
+                    // 多选 / 退出多选（同一颗按钮切换；归档模式不提供多选）
                     val accent = if (selectMode) MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.primary
-                    Box(
+                    if (!archivedMode) Box(
                         Modifier
                             .frostedPanel(
                                 // 多选态用红色描边提示「再点一次退出」；平时走默认立体渐变边
@@ -933,7 +1143,7 @@ fun HomeScreen(
                             },
                     ) {
                         Row(
-                            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Icon(
@@ -953,7 +1163,8 @@ fun HomeScreen(
             }
 
             // ---------------------------------------------- 底部浮动操作区
-            if (!selectMode) {
+            // 归档模式没有新增/拍照/搜索，不显示
+            if (!selectMode && !archivedMode) {
                 HomeFloatingBar(
                     keyword = filter.keyword,
                     onKeywordChange = { filter.keyword = it },
@@ -963,23 +1174,6 @@ fun HomeScreen(
                 )
             }
         }
-    }
-    pendingDelete?.let { item ->
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text("删除物品") },
-            text = { Text("确定删除「${item.name}」吗？相关图片也会一并删除。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    val target = item
-                    pendingDelete = null
-                    scope.launch { store.removeItem(context, target.id) }
-                }) { Text("删除") }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("取消") }
-            },
-        )
     }
 
     // 多选：批量切换空间
@@ -1065,6 +1259,50 @@ fun HomeScreen(
         )
     }
 
+    // 左滑确认（归档 / 删除）：弹框在页面层，列表滚动把行回收掉也不会把框带走
+    swipeAsk?.let { ask ->
+        val target = ask.item
+        AlertDialog(
+            onDismissRequest = { closeSwipeAsk() },
+            title = { Text(if (ask.delete) "删除物品" else "归档物品") },
+            text = {
+                Text(
+                    if (ask.delete) {
+                        "确定删除「${target.name}」吗？相关图片也会一并删除。"
+                    } else {
+                        "确定将「${target.name}」归档吗？归档后不再出现在列表与提醒中，可在归档中调回。"
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    swipeAsk = null
+                    scope.launch {
+                        if (ask.delete) {
+                            store.removeItem(context, target.id)
+                        } else {
+                            store.setItemsArchived(context, listOf(target.id), true)
+                            Toast.makeText(
+                                context, "已归档「${target.name}」", Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                        // 删除/归档都不该再留通知栏里那条提醒
+                        ReminderService.cancelNotificationsFor(context, listOf(target.id))
+                    }
+                }) {
+                    Text(
+                        if (ask.delete) "删除" else "归档",
+                        color = if (ask.delete) MaterialTheme.colorScheme.error
+                        else Color.Unspecified,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { closeSwipeAsk() }) { Text("取消") }
+            },
+        )
+    }
+
     viewer?.let { state ->
         ImageViewerOverlay(
             paths = state.paths,
@@ -1075,61 +1313,7 @@ fun HomeScreen(
     }
 }
 
-/**
- * 首页「浮起面板」底：半透明面板 + 柔投影 + 一条能看清边界的立体描边。
- *
- * 透明度：默认 0.95，按钮背后的内容只剩极淡的轮廓，按钮文字干净可读；
- * 需要承载数字/正文的地方（统计卡）由调用方传更高的 [fillAlpha] 保对比度。
- *
- * 描边为什么用渐变而不是白色亮边：白亮边落在浅色背景上等于没有边界。这里整圈走
- * outlineVariant 灰线（上 0.62 → 中 0.82 → 底 0.95），四边都看得见；靠深浅差异做厚度，
- * 上边略浅、下边最深，面板仍然是「压」在内容上的感觉。再配合 [Modifier.shadow] 起浮。
- *
- * 为什么不直接用 `Surface(color = 半透明, shadowElevation = x)`：
- * M3 的 Surface 会把容器色当作阴影底板一起画，颜色带 alpha 时这块底板就从圆角外
- * 透出一片**白色矩形**（统计卡、分类行、底部控件都中过招）。这里改成
- * `Modifier.shadow` 显式给一组中性阴影色，再单独叠背景层和描边，绕开这个问题。
- *
- * 末尾的 [Modifier.clip] 让水波纹和子内容都收在圆角里，阴影因为 `clip = false` 不被切掉。
- */
-@Composable
-private fun Modifier.frostedPanel(
-    shape: Shape = RoundedCornerShape(18.dp),
-    elevation: Dp = 12.dp,
-    fill: Color = MaterialTheme.colorScheme.surface,
-    fillAlpha: Float = 0.95f,
-    borderColor: Color? = null,
-    borderWidth: Dp = 1.2.dp,
-): Modifier {
-    val outline = MaterialTheme.colorScheme.outlineVariant
-    // 传了 borderColor 就整圈单色（多选态的警示红），否则用上亮下暗的立体渐变。
-    // 中段和底部都压得很深：容器全透之后，这条灰线是区分按钮边界的唯一依靠。
-    val edge: Brush = borderColor?.let { color ->
-        Brush.verticalGradient(
-            0f to color.copy(alpha = 0.55f),
-            1f to color,
-        )
-    } ?: Brush.verticalGradient(
-        // 上边界也必须是能看见的细线：之前这里用纯白高光，落在浅色背景上等于没有边界，
-        // 按钮顶部完全糊在页面里（用户反馈「按钮上边界无法辨认」）。
-        // 整圈都用 outlineVariant，只靠深浅做立体：上浅 → 中深 → 底最深。
-        0f to outline.copy(alpha = 0.62f),
-        0.45f to outline.copy(alpha = 0.82f),
-        1f to outline.copy(alpha = 0.95f),
-    )
-    return this
-        .shadow(
-            elevation = elevation,
-            shape = shape,
-            clip = false,
-            ambientColor = Color(0x14000000),
-            // 主阴影略收、方向明确：面板浮起来的同时底缘不会糊成一片灰
-            spotColor = Color(0x2B000000),
-        )
-        .background(fill.copy(alpha = fillAlpha), shape)
-        .border(borderWidth, edge, shape)
-        .clip(shape)
-}
+// frostedPanel 已提取到 Common.kt 作为全站公共 modifier，首页/编辑页/分类页/空间页共用同一套
 
 /**
  * 分类行 Row 的顶部内边距，同时是顶部遮罩淡出带的高度：
@@ -1144,12 +1328,73 @@ private fun countOf(
 ): Int = grouped.firstOrNull { it.first == status }?.second?.size ?: 0
 
 /**
- * 底部浮动操作区：搜索胶囊 + 独立拍照圆钮 + 新增圆钮。
+ * 列表模式切换器：一条磨砂胶囊里两等分「倒计时 / 循环任务」，各自带当前空间的条数。
+ * 选中段用主色淡底 + 主色粗字，未选中段透明；文字在各自半区内水平、垂直双居中，与分类行同一套 frostedPanel 风格。
+ */
+@Composable
+private fun ListModeSwitcher(
+    mode: String,
+    countdownCount: Int,
+    cycleCount: Int,
+    onChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .frostedPanel()
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        val tabs = listOf(
+            Triple(HomeFilterState.MODE_COUNTDOWN, "倒计时", countdownCount),
+            Triple(HomeFilterState.MODE_CYCLE, "循环任务", cycleCount),
+        )
+        tabs.forEach { (modeKey, label, count) ->
+            val active = mode == modeKey
+            Column(
+                Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(15.dp))
+                    .background(
+                        if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                        else Color.Transparent,
+                    )
+                    .clickable { onChange(modeKey) }
+                    .padding(vertical = 11.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (active) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "$count",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (active) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 底部浮动操作区：搜索胶囊 + 独立拍照圆钮 + 绿色新增圆钮。
  *
  * 三者各自成块浮在内容之上（不共用一条底板），高度统一 56dp、间距统一 10dp，
  * 固定吸底不随列表滚动；搜索占满左侧剩余宽度，拍照夹在中间。
- * 容器完全透明：不给整条垫任何渐隐底，透出的是清晰内容，
- * 可读性靠三颗控件自身的半透明面板 + 立体描边 + 投影。
+ * 整条背后压一层「透明 → 背景色」的渐隐，列表滚到底时自然化开，不会撞到按钮上。
  * 键盘弹出时被顶到键盘上方，边输边看结果。
  */
 @Composable
@@ -1163,11 +1408,10 @@ private fun HomeFloatingBar(
     Box(
         modifier
             .fillMaxWidth()
+            // 底板彻底透明：只有三个控件本身浮在内容上，列表内容从它们之间和下面穿过
             .navigationBarsPadding()
             .imePadding()
-            // 容器完全透明（用户要求，勿回退）：不许给按钮所在容器垫任何渐隐底/不透明度，
-            // 透出的是清晰内容；可读性全靠三颗控件自身的半透明面板 + 描边 + 投影。
-            .padding(start = 16.dp, end = 16.dp, top = 28.dp, bottom = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         Row(
             Modifier.fillMaxWidth(),
@@ -1400,16 +1644,29 @@ private fun StatCard(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-private fun ItemRow(
+internal fun ItemRow(
     item: ExpiryItem,
     store: ExpiryStore,
+    /** 归档页模式：左滑只剩「删除」一段，右侧显示「调回」按钮，不显示「完成本次」。 */
+    archivedMode: Boolean = false,
     selectMode: Boolean,
     selected: Boolean,
     /** 「全部空间」筛选下显示归属空间，否则列表里分不清哪件属于哪个空间。 */
     showSpace: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    onSwipeDelete: () -> Unit,
+    /**
+     * 左滑沉降到确认位时上报：true = 删除段，false = 归档段。
+     * 确认框由页面层弹（不挂在行内），列表滚动把行回收掉也不会丢框；
+     * 页面层取消/处理完把 [swipeResetToken] +1，行据此回弹。
+     */
+    onAskSwipe: (delete: Boolean) -> Unit = {},
+    /** 每次自增表示「确认框已关闭」，行收到变化就回弹到原位。 */
+    swipeResetToken: Int = 0,
+    /** 归档页模式：点「调回」恢复到正常列表。 */
+    onRestore: () -> Unit = {},
+    /** 循环物品：完成本次维护，推进到下一周期。 */
+    onCompleteCycle: () -> Unit = { },
     /** 点击缩略图看大图，带回缩略图的屏幕位置供查看器做展开/缩回转场。 */
     onViewImages: (ImageOrigin?) -> Unit,
 ) {
@@ -1419,68 +1676,134 @@ private fun ItemRow(
     // 圆角必须与缩略图一致（8dp），否则缩回终点形状不符会闪一下。
     val thumbRadiusPx = with(LocalDensity.current) { 8.dp.toPx() }
     var thumbOrigin by remember { mutableStateOf<ImageOrigin?>(null) }
-    val rowScope = rememberCoroutineScope()
-    // confirmValueChange 已在 material3 1.4 弃用：改用 SwipeToDismissBox 的 onDismiss 回调，
-    // 沉降后由 onDismiss 里 reset() 弹回原位
-    val dismissState = rememberSwipeToDismissBoxState(
-        positionalThreshold = { it * 0.5f },
-    )
 
-    // 卡片圆角：色条内缩量、红底裁切都用它，避免三处各写一个数字后对不齐
-    val cardShape = RoundedCornerShape(24.dp)
-    // 左滑删除红底的显隐：静止时必须完全不画，只有真的在拖（或回弹动画中）才画。
-    // 注意不能用 dismissState.progress —— 它算的是「currentValue → targetValue 的过渡比例」，
-    // current 与 target 相等（静止在 Settled）时 AnchoredDraggable 的 progress 直接返回 1f，
-    // 并不是 0f。把它当透明度就等于红底常驻、满不透明地铺在卡片正下方，全靠卡片自己盖住；
-    // 而卡片圆角是抗锯齿的，盖不严，四个角和底边就会渗出一圈红边。
-    // offset 是 internal，取不到；dismissDirection 公开且只在位移为 0 时是 Settled，
-    // 正好当「是否在拖」用，而且它和 alpha 一样在绘制阶段读，拖动时不触发重组。
-    val redAlpha: () -> Float = {
-        val dragging = runCatching {
-            dismissState.dismissDirection != SwipeToDismissBoxValue.Settled
-        }.getOrDefault(false)
-        if (dragging) 1f else 0f
+    // ---------------------------------------------------------------- 左滑两段式
+    // 中段 = 归档（黄底「归档」），滑满 = 删除（红底「删除」）。松手后沉降到哪个锚点，
+    // 就弹哪个确认框；取消则回弹到原位。整体替换掉 SwipeToDismissBox：它只有一个确认锚点，
+    // 撑不起「滑一半归档、继续滑删除」的两段语义。
+    var rowWidthPx by remember { mutableIntStateOf(0) }
+    val swipeState = remember(item.id) {
+        AnchoredDraggableState(initialValue = RowSwipeStage.Settled)
+    }
+    // 锚点依赖行宽（首次布局后才有），归档页模式少一个「归档」锚点
+    LaunchedEffect(rowWidthPx, archivedMode) {
+        if (rowWidthPx > 0) {
+            swipeState.updateAnchors(
+                DraggableAnchors {
+                    RowSwipeStage.Settled at 0f
+                    if (!archivedMode) RowSwipeStage.Archive at -rowWidthPx * 0.45f
+                    RowSwipeStage.Delete at -rowWidthPx * 0.94f
+                },
+            )
+        }
+    }
+    // 沉降结果 → 上报页面层弹确认框；取消后由 swipeResetToken 驱动回弹。
+    // 用 rememberUpdatedState 取最新回调：collect 的闭包只在 swipeState 变化时重建，
+    // 否则会一直拿着首次组合时的 onAskSwipe（以及它捕获的旧 item）
+    val latestAskSwipe by rememberUpdatedState(onAskSwipe)
+    LaunchedEffect(swipeState) {
+        snapshotFlow { swipeState.settledValue }.collect { stage ->
+            when (stage) {
+                RowSwipeStage.Archive -> latestAskSwipe(false)
+                RowSwipeStage.Delete -> latestAskSwipe(true)
+                RowSwipeStage.Settled -> {}
+            }
+        }
+    }
+    // 页面层关掉确认框（取消 / 已执行）都会自增 token；行若停在确认位就回弹
+    LaunchedEffect(swipeResetToken) {
+        if (swipeResetToken > 0 && swipeState.settledValue != RowSwipeStage.Settled) {
+            swipeState.animateTo(RowSwipeStage.Settled)
+        }
+    }
+    // 左滑进度（0..1）：底色与文案切换、显隐全部在绘制阶段读，拖动时不触发重组
+    val swipeFrac: () -> Float = {
+        val w = rowWidthPx.toFloat()
+        val off = swipeState.offset
+        if (w <= 0f || off.isNaN()) 0f else (-off / w).coerceIn(0f, 1f)
+    }
+    // 底色显隐：offset 归零（含锚点未就绪的 NaN）时完全不画，避免抗锯齿圆角渗色边
+    val bgAlpha: () -> Float = {
+        val off = swipeState.offset
+        if (off.isNaN() || off == 0f) 0f else 1f
     }
 
-    SwipeToDismissBox(
-        state = dismissState,
-        enableDismissFromStartToEnd = false,
-        // 多选态下整行都是「点选」区域，禁止左滑，避免露出删除红底
-        enableDismissFromEndToStart = !selectMode,
-        onDismiss = { direction ->
-            if (direction == SwipeToDismissBoxValue.EndToStart && !selectMode) {
-                onSwipeDelete()
+    // 卡片圆角：色条内缩量、底色裁切都用它，避免三处各写一个数字后对不齐
+    val cardShape = RoundedCornerShape(24.dp)
+
+    Box(Modifier.onSizeChanged { rowWidthPx = it.width }) {
+        // ------------------------------------------ 左滑底色（黄=归档段 / 红=删除段）
+        // 底色比卡片内缩 2dp：卡片圆角是抗锯齿边缘，两者严丝合缝对齐时
+        // 下层总会渗出 1px 色边，内缩后底色的圆角完全落在卡片圆角以内。
+        Box(
+            Modifier
+                .matchParentSize()
+                .graphicsLayer { alpha = bgAlpha() }
+                .padding(2.dp)
+                .clip(cardShape),
+        ) {
+            // 归档段（黄底）：首页模式才有；删除段盖在它上面，切换处用透明度硬切
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .graphicsLayer {
+                        alpha = if (!archivedMode && swipeFrac() < SwipeDeleteSwitchFrac) 1f else 0f
+                    }
+                    .background(ArchiveSwipeColor),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Text(
+                    "归档",
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(end = 24.dp),
+                )
             }
-            // 无论是否触发删除都弹回原位，删除交给对话框确认
-            rowScope.launch { dismissState.reset() }
-        },
-        backgroundContent = {
-            // 多选态不画删除底色：卡片选中色是半透明的，红底会透上来变成一片红
-            if (!selectMode) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        // 红底比卡片内缩 2dp：卡片圆角是抗锯齿边缘，两者严丝合缝对齐时
-                        // 下层总会渗出 1px 红边，内缩后红底的圆角完全落在卡片圆角以内。
-                        .padding(2.dp)
-                        .clip(cardShape)
-                        .background(MaterialTheme.colorScheme.error)
-                        // alpha 在绘制阶段才读，拖动时不触发重组；静止时是 0，一个像素都不画
-                        .graphicsLayer { alpha = redAlpha() },
-                    contentAlignment = Alignment.CenterEnd,
+            // 删除段（红底）：保留原来的 error 色。
+            // 归档页没有「归档」段，红底必须从 0 就跟手出现，否则拖到 70% 之前是一片空白。
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .graphicsLayer {
+                        alpha = if (archivedMode || swipeFrac() >= SwipeDeleteSwitchFrac) 1f else 0f
+                    }
+                    .background(MaterialTheme.colorScheme.error),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(end = 20.dp),
                 ) {
                     Icon(
-                        Icons.Filled.Delete, contentDescription = "删除",
-                        tint = Color.White, modifier = Modifier.padding(end = 20.dp),
+                        Icons.Filled.Delete, contentDescription = null,
+                        tint = Color.White, modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "删除",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
                     )
                 }
             }
-        },
-    ) {
-        // 不用 Card 的 1dp elevation：那层阴影在 Android 上会聚成一条紧贴卡片的深灰硬线，
-        // 配上 24dp 大圆角看着像「边框没画完」。这里换成和统计卡、分类行同源的柔阴影。
+        }
+
+        // ------------------------------------------ 卡片本体（跟手位移）
         Box(
             Modifier
+                // 锚点还没就绪时 offset 是 NaN，roundToInt 会抛 IllegalArgumentException，先兜成 0
+                .offset {
+                    val off = swipeState.offset
+                    IntOffset(if (off.isNaN()) 0 else off.roundToInt(), 0)
+                }
+                .anchoredDraggable(
+                    state = swipeState,
+                    orientation = Orientation.Horizontal,
+                    // 多选态下整行都是「点选」区域，禁止左滑，避免露出底色
+                    enabled = !selectMode,
+                )
                 .fillMaxWidth()
                 .shadow(
                     elevation = 10.dp,
@@ -1597,6 +1920,14 @@ private fun ItemRow(
                             // 「N 张图」放到右侧剩余天数下方；数量已挪到名称右边，这里都不再重复
                             val meta = buildList {
                                 add(store.categoryLabelOf(item.category))
+                                if (item.repeatEnabled) {
+                                    val cycleUnit = when (item.shelfLifeUnit) {
+                                        ShelfLifeUnit.day -> "天"
+                                        ShelfLifeUnit.month -> "月"
+                                        ShelfLifeUnit.year -> "年"
+                                    }
+                                    add("循环 · 每${item.shelfLife}${cycleUnit}")
+                                }
                                 if (item.expireAt.isNotEmpty()) add(item.expireAt)
                             }
                             Text(
@@ -1655,6 +1986,56 @@ private fun ItemRow(
                                     fontWeight = FontWeight.SemiBold,
                                     color = hexColor(status.color),
                                 )
+                            }
+                            if (item.repeatEnabled && !selectMode && !archivedMode) {
+                                Spacer(Modifier.height(4.dp))
+                                Surface(
+                                    onClick = onCompleteCycle,
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                                ) {
+                                    Row(
+                                        Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Check, contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(12.dp),
+                                        )
+                                        Spacer(Modifier.width(2.dp))
+                                        Text(
+                                            "完成本次",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                }
+                            }
+                            if (archivedMode) {
+                                Spacer(Modifier.height(4.dp))
+                                Surface(
+                                    onClick = onRestore,
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                                ) {
+                                    Row(
+                                        Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Refresh, contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(12.dp),
+                                        )
+                                        Spacer(Modifier.width(2.dp))
+                                        Text(
+                                            "调回",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                }
                             }
                             if (item.images.isNotEmpty()) {
                                 Spacer(Modifier.height(4.dp))

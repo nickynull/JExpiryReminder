@@ -60,6 +60,21 @@ class SettingsStore private constructor() {
     private val _statCards = MutableStateFlow(StatCard.DEFAULT)
     val statCards: StateFlow<List<StatCard>> get() = _statCards
 
+    /** 同一 Wi-Fi 下自动发现设备并合并数据；默认关闭，老用户升级后不受影响。 */
+
+    /** 流体云 / Live Update 提醒：仅 Android 16+ 且有系统支持时生效，否则自动降级。 */
+    private val _liveUpdateEnabled = MutableStateFlow(true)
+    val liveUpdateEnabled: StateFlow<Boolean> get() = _liveUpdateEnabled
+
+    /** 开机后是否恢复 30 分钟一次的自动同步排程。 */
+
+    /**
+     * 锁屏 / 通知栏隐藏物品详情。开启后锁屏只显示「到期提醒 · 点击查看」，
+     * 解锁后才看得到具体物品名——避免手机放在桌上时旁人一眼扫到家里买了什么。
+     */
+    private val _hideNotificationDetail = MutableStateFlow(false)
+    val hideNotificationDetail: StateFlow<Boolean> get() = _hideNotificationDetail
+
     fun load(context: Context) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val raw = prefs.getString(KEY_SETTINGS, null) ?: return
@@ -76,6 +91,13 @@ class SettingsStore private constructor() {
             // 旧版本没有这个键：缺省按开启处理（只读，不重写用户已有设置）
             if (map.has("useAlarmClock") && !map.isNull("useAlarmClock")) {
                 _useAlarmClock.value = map.optBoolean("useAlarmClock", true)
+            }
+            // 自动同步默认关闭；旧版本没有这个键时保持默认，不写回
+            if (map.has("liveUpdateEnabled") && !map.isNull("liveUpdateEnabled")) {
+                _liveUpdateEnabled.value = map.optBoolean("liveUpdateEnabled", true)
+            }
+            if (map.has("hideNotificationDetail") && !map.isNull("hideNotificationDetail")) {
+                _hideNotificationDetail.value = map.optBoolean("hideNotificationDetail", false)
             }
             // 旧版本没有统计卡配置：保持默认，不写回
             val cards = map.optJSONArray("statCards")
@@ -98,23 +120,29 @@ class SettingsStore private constructor() {
         notifyTime: String? = null,
         useAlarmClock: Boolean? = null,
         statCards: List<StatCard>? = null,
+        liveUpdateEnabled: Boolean? = null,
+        hideNotificationDetail: Boolean? = null,
     ) {
         if (themeMode != null) _themeMode.value = themeMode
         if (notifyEnabled != null) _notifyEnabled.value = notifyEnabled
         if (notifyTime != null && TIME_REGEX.matches(notifyTime)) _notifyTime.value = notifyTime
         if (useAlarmClock != null) _useAlarmClock.value = useAlarmClock
         if (statCards != null) _statCards.value = StatCard.normalize(statCards.map { it.key })
+        if (liveUpdateEnabled != null) _liveUpdateEnabled.value = liveUpdateEnabled
+        if (hideNotificationDetail != null) _hideNotificationDetail.value = hideNotificationDetail
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putString(
                 KEY_SETTINGS,
                 JSONObject()
-                    .put("version", 5)
+                    .put("version", 7)
                     .put("theme", _themeMode.value.name)
                     .put("notifyEnabled", _notifyEnabled.value)
                     .put("notifyTime", _notifyTime.value)
                     .put("useAlarmClock", _useAlarmClock.value)
                     .put("statCards", JSONArray(_statCards.value.map { it.key }))
+                    .put("liveUpdateEnabled", _liveUpdateEnabled.value)
+                    .put("hideNotificationDetail", _hideNotificationDetail.value)
                     .toString(),
             )
             .apply()

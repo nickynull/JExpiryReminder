@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -108,12 +109,12 @@ fun SpaceScreen(onBack: () -> Unit) {
             )
         },
     ) { padding ->
-        Column(
+        Box(
             Modifier
                 .padding(padding)
-                .fillMaxSize()
-                .imePadding(),
+                .fillMaxSize(),
         ) {
+        Column(Modifier.fillMaxSize().imePadding()) {
             Text(
                 "点整行改名，点左侧圆点换颜色（「全部空间」「未分配」也能换）；"
                     + "删除空间不会删除物品，空间里的物品会变成「未分配」",
@@ -124,7 +125,7 @@ fun SpaceScreen(onBack: () -> Unit) {
 
             LazyColumn(
                 modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 2.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 92.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(options, key = { it.id }) { space ->
@@ -165,44 +166,49 @@ fun SpaceScreen(onBack: () -> Unit) {
                 }
             }
 
-            // 新增区钉在底部，键盘弹出时跟着抬起
-            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+        }
+
+        // 新增区悬浮胶囊：与首页/编辑页同一套磨砂浮起，列表从它下面穿过
+        Column(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .frostedPanel(RoundedCornerShape(20.dp))
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                InputBox(
+                    value = newLabel,
+                    onValueChange = { newLabel = it; newError = null },
+                    placeholder = "新增空间名称，如：爸妈家",
+                    fixedHeight = 48.dp,
+                    showClear = true,
+                    isError = newError != null,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(10.dp))
+                Button(
+                    onClick = { submitNew() },
+                    enabled = newLabel.isNotBlank(),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.height(48.dp),
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        InputBox(
-                            value = newLabel,
-                            onValueChange = { newLabel = it; newError = null },
-                            placeholder = "新增空间名称，如：爸妈家",
-                            fixedHeight = 48.dp,
-                            showClear = true,
-                            isError = newError != null,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Button(
-                            onClick = { submitNew() },
-                            enabled = newLabel.isNotBlank(),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.height(48.dp),
-                        ) {
-                            Text("添加")
-                        }
-                    }
-                    newError?.let {
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            it,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(start = 4.dp),
-                        )
-                    }
+                    Text("添加")
                 }
             }
+            newError?.let {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+            }
+        }
         }
     }
 
