@@ -4,11 +4,11 @@ import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,22 +18,20 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -64,8 +62,8 @@ import kotlinx.coroutines.launch
 /**
  * 空间管理：用户主动创建的自定义空间。
  *
- * 交互跟分类管理页保持一致：点整行改名、点左侧圆点换色、右侧 × 删除。
- * 不做拖动排序——空间一般只有几个，按创建顺序足够用。
+ * 外观与交互完全对齐分类管理页（同一套 [SortableRowList]）：长按整行拖动排序、
+ * 点整行改名、点左侧色点换色、右侧 × 删除、底部磨砂胶囊新增。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -76,12 +74,24 @@ fun SpaceScreen(onBack: () -> Unit) {
     // 收集到的 state 变了才重算，否则新增/改名后列表不刷新（与分类管理页同一坑）
     val options = remember(state) { store.spaceOptions() }
     val scope = rememberCoroutineScope()
+    val listState = rememberLazyListState()
 
     var newLabel by remember { mutableStateOf("") }
     var newError by remember { mutableStateOf<String?>(null) }
     var colorFor by remember { mutableStateOf<SpaceDef?>(null) }
     var renameFor by remember { mutableStateOf<SpaceDef?>(null) }
+    var renameError by remember { mutableStateOf<String?>(null) }
     var pendingDelete by remember { mutableStateOf<SpaceDef?>(null) }
+    // 新增成功后滚到新行，确认「加进去了」（与分类管理页一致）
+    var scrollToNew by remember { mutableStateOf(false) }
+
+    LaunchedEffect(options.size) {
+        if (scrollToNew && options.isNotEmpty()) {
+            scrollToNew = false
+            // 列表最前面固定有一行「全部空间」，所以真空间行整体后移一位
+            listState.animateScrollToItem(options.size)
+        }
+    }
 
     fun submitNew() {
         if (newLabel.isBlank()) {
@@ -90,9 +100,12 @@ fun SpaceScreen(onBack: () -> Unit) {
         }
         scope.launch {
             val created = store.addSpace(context, newLabel)
-            if (created == null) newError = "空间已存在" else {
+            if (created == null) {
+                newError = "已有同名空间"
+            } else {
                 newLabel = ""
                 newError = null
+                scrollToNew = true
             }
         }
     }
@@ -114,101 +127,115 @@ fun SpaceScreen(onBack: () -> Unit) {
                 .padding(padding)
                 .fillMaxSize(),
         ) {
-        Column(Modifier.fillMaxSize().imePadding()) {
-            Text(
-                "点整行改名，点左侧圆点换颜色（「全部空间」「未分配」也能换）；"
-                    + "删除空间不会删除物品，空间里的物品会变成「未分配」",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 2.dp, bottom = 10.dp),
-            )
+            Column(Modifier.fillMaxSize().imePadding()) {
+                Text(
+                    "长按空间可拖动排序；点整行改名，点左侧圆点换颜色（「全部空间」「未分配」也能换）；"
+                        + "删除空间不会删除物品，空间里的物品会变成「未分配」",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 2.dp, bottom = 10.dp),
+                )
 
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 92.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(options, key = { it.id }) { space ->
-                    SpaceRow(
+                SortableRowList(
+                    items = options,
+                    idOf = { it.id },
+                    listState = listState,
+                    onReorder = { ids -> scope.launch { store.reorderSpaces(context, ids) } },
+                    onClick = { renameFor = it },
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(
+                        start = 16.dp, end = 16.dp, top = 4.dp, bottom = 92.dp,
+                    ),
+                    // 「全部空间」不是真空间，但颜色同样可改（只影响界面显示）；
+                    // 它是首页默认停留的那一页，跟分类页的「全部分类」一样固定在顶部、不参与拖动
+                    headerContent = {
+                        item {
+                            PseudoSpaceRow(
+                                label = Spaces.ALL_LABEL,
+                                hint = "首页默认，包含全部空间与物品",
+                                color = store.spaceColorOf(Spaces.ALL),
+                                count = store.itemCountInSpace(Spaces.ALL),
+                                tag = "汇总",
+                                onPickColor = {
+                                    colorFor = SpaceDef(
+                                        Spaces.ALL,
+                                        Spaces.ALL_LABEL,
+                                        store.spaceColorOf(Spaces.ALL),
+                                    )
+                                },
+                            )
+                        }
+                    },
+                    extraContent = {
+                        // 「未分配」是兜底归属，放在列表最末尾、所有真空间之后；同样不参与拖动
+                        item {
+                            PseudoSpaceRow(
+                                label = Spaces.UNASSIGNED_LABEL,
+                                hint = "不属于任何空间的物品",
+                                color = store.spaceColorOf(""),
+                                count = store.itemCountInSpace(""),
+                                tag = null,
+                                onPickColor = {
+                                    colorFor = SpaceDef(
+                                        "",
+                                        Spaces.UNASSIGNED_LABEL,
+                                        store.spaceColorOf(""),
+                                    )
+                                },
+                            )
+                        }
+                    },
+                ) { space ->
+                    SpaceRowContent(
                         space = space,
                         usage = store.itemCountInSpace(space.id),
                         onPickColor = { colorFor = space },
-                        onRename = { renameFor = space },
                         onDelete = { pendingDelete = space },
                     )
                 }
+            }
 
-                // 「全部空间」「未分配」不是真空间，但颜色同样可改（只影响界面显示）
-                item {
-                    PseudoSpaceRow(
-                        label = Spaces.ALL_LABEL,
-                        hint = "首页默认停在这里，包含所有空间与未分配的物品",
-                        color = store.spaceColorOf(Spaces.ALL),
-                        count = store.itemCountInSpace(Spaces.ALL),
-                        tag = "汇总",
-                        onPickColor = {
-                            colorFor = SpaceDef(Spaces.ALL, Spaces.ALL_LABEL, store.spaceColorOf(Spaces.ALL))
-                        },
+            // 新增区悬浮胶囊：与首页/编辑页同一套磨砂浮起，列表从它下面穿过
+            Column(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .imePadding()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .frostedPanel(RoundedCornerShape(20.dp))
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    InputBox(
+                        value = newLabel,
+                        onValueChange = { newLabel = it; newError = null },
+                        placeholder = "新增空间名称，如：我的房间",
+                        fixedHeight = 48.dp,
+                        showClear = true,
+                        isError = newError != null,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Button(
+                        onClick = { submitNew() },
+                        enabled = newLabel.isNotBlank(),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.height(48.dp),
+                    ) {
+                        Text("添加")
+                    }
+                }
+                // 错误文案放到框外，样式与分类管理页一致
+                newError?.let { msg ->
+                    Text(
+                        msg,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(start = 12.dp, top = 4.dp),
                     )
                 }
-
-                item {
-                    PseudoSpaceRow(
-                        label = Spaces.UNASSIGNED_LABEL,
-                        hint = "不属于任何空间的物品会显示在这里",
-                        color = store.spaceColorOf(""),
-                        count = store.itemCountInSpace(""),
-                        tag = null,
-                        onPickColor = {
-                            colorFor = SpaceDef("", Spaces.UNASSIGNED_LABEL, store.spaceColorOf(""))
-                        },
-                    )
-                }
             }
-
-        }
-
-        // 新增区悬浮胶囊：与首页/编辑页同一套磨砂浮起，列表从它下面穿过
-        Column(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .imePadding()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-                .frostedPanel(RoundedCornerShape(20.dp))
-                .padding(horizontal = 12.dp, vertical = 12.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                InputBox(
-                    value = newLabel,
-                    onValueChange = { newLabel = it; newError = null },
-                    placeholder = "新增空间名称，如：爸妈家",
-                    fixedHeight = 48.dp,
-                    showClear = true,
-                    isError = newError != null,
-                    modifier = Modifier.weight(1f),
-                )
-                Spacer(Modifier.width(10.dp))
-                Button(
-                    onClick = { submitNew() },
-                    enabled = newLabel.isNotBlank(),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.height(48.dp),
-                ) {
-                    Text("添加")
-                }
-            }
-            newError?.let {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    it,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(start = 4.dp),
-                )
-            }
-        }
         }
     }
 
@@ -226,17 +253,25 @@ fun SpaceScreen(onBack: () -> Unit) {
     renameFor?.let { space ->
         RenameSpaceDialog(
             space = space,
+            error = renameError,
+            onEdit = { renameError = null },
             onConfirm = { name ->
                 scope.launch {
-                    val error = store.renameSpace(context, space.id, name)
-                    when (error) {
-                        SpaceNameError.empty -> Toast.makeText(context, "名称不能为空", Toast.LENGTH_SHORT).show()
-                        SpaceNameError.duplicate -> Toast.makeText(context, "空间名已存在", Toast.LENGTH_SHORT).show()
-                        null -> renameFor = null
+                    when (store.renameSpace(context, space.id, name)) {
+                        // 与分类管理页一致：错误就地显示在输入框下方，对话框不关
+                        SpaceNameError.empty -> renameError = "名称不能为空"
+                        SpaceNameError.duplicate -> renameError = "已有同名空间"
+                        null -> {
+                            renameFor = null
+                            renameError = null
+                        }
                     }
                 }
             },
-            onDismiss = { renameFor = null },
+            onDismiss = {
+                renameFor = null
+                renameError = null
+            },
         )
     }
 
@@ -277,6 +312,60 @@ fun SpaceScreen(onBack: () -> Unit) {
     }
 }
 
+/**
+ * 真空间行的内容（容器、背景、拖动都交给 [SortableRowList]）。
+ */
+@Composable
+private fun RowScope.SpaceRowContent(
+    space: SpaceDef,
+    usage: Int,
+    onPickColor: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Box(
+        Modifier
+            .size(24.dp)
+            .clip(CircleShape)
+            .background(hexColor(space.color))
+            .border(1.dp, MaterialTheme.colorScheme.surfaceContainerHighest, CircleShape)
+            .clickable(onClick = onPickColor),
+    )
+    Spacer(Modifier.width(12.dp))
+    Text(
+        space.label,
+        style = MaterialTheme.typography.bodyLarge,
+        color = MaterialTheme.colorScheme.onSurface,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.weight(1f),
+    )
+    Text(
+        "$usage 件",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.width(6.dp))
+    IconButton(onClick = onDelete) {
+        Icon(
+            Icons.Filled.Close,
+            contentDescription = "删除空间",
+            tint = MaterialTheme.colorScheme.error,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+    // 与分类管理页同款把手；空间行同样支持长按整行拖动
+    Icon(
+        Icons.Filled.Menu,
+        contentDescription = "长按拖动排序",
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.size(22.dp),
+    )
+}
+
+/**
+ * 「全部空间」「未分配」：卡片外观与真空间行一致（同高、同圆角、同底色），
+ * 但文字用次要色表示「不是真空间」，且不参与拖动、不能删除。
+ */
 @Composable
 private fun PseudoSpaceRow(
     label: String,
@@ -289,7 +378,9 @@ private fun PseudoSpaceRow(
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .height(SortRowHeight)
+            .background(MaterialTheme.colorScheme.surfaceContainerLow, SortRowShape)
+            .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
@@ -306,11 +397,15 @@ private fun PseudoSpaceRow(
                 label,
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 hint,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
         Text(
@@ -330,67 +425,12 @@ private fun PseudoSpaceRow(
     }
 }
 
-@Composable
-private fun SpaceRow(
-    space: SpaceDef,
-    usage: Int,
-    onPickColor: (() -> Unit)?,
-    onRename: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onRename)
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                Modifier
-                    .size(24.dp)
-                    .clip(CircleShape)
-                    .background(hexColor(space.color))
-                    .border(1.dp, MaterialTheme.colorScheme.surfaceContainerHighest, CircleShape)
-                    .then(
-                        if (onPickColor != null) Modifier.clickable(onClick = onPickColor) else Modifier
-                    ),
-            )
-            Spacer(Modifier.width(12.dp))
-            Text(
-                space.label,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                "$usage 件",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.width(6.dp))
-            IconButton(onClick = onDelete) {
-                Icon(
-                    Icons.Filled.Close,
-                    contentDescription = "删除空间",
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
-    }
-}
-
-/** 空间改名：预填原名并全选，方便直接覆盖。 */
+/** 空间改名：预填原名并全选，方便直接覆盖；重名/空名就地提示。 */
 @Composable
 private fun RenameSpaceDialog(
     space: SpaceDef,
+    error: String?,
+    onEdit: () -> Unit,
     onConfirm: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -409,13 +449,25 @@ private fun RenameSpaceDialog(
             Column {
                 InputBox(
                     value = value,
-                    onValueChange = { value = it },
+                    onValueChange = {
+                        value = it
+                        onEdit()
+                    },
                     placeholder = "空间名称",
                     fixedHeight = 48.dp,
                     focusRequester = focus,
                     showClear = true,
+                    isError = error != null,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                error?.let { msg ->
+                    Text(
+                        msg,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(start = 12.dp, top = 4.dp),
+                    )
+                }
             }
         },
         confirmButton = {

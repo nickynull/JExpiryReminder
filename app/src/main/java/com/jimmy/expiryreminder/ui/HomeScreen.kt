@@ -128,6 +128,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.jimmy.expiryreminder.core.Categories
 import com.jimmy.expiryreminder.core.Dates
 import com.jimmy.expiryreminder.core.ExpiryItem
 import com.jimmy.expiryreminder.core.ExpiryStatus
@@ -154,13 +155,22 @@ private data class SwipeAsk(val item: ExpiryItem, val delete: Boolean)
 private val ArchiveSwipeColor = Color(0xFFE6A23C)
 
 /**
+ * 左滑的两个沉降锚点（都是行宽的比例，向右为负）。
+ *
+ * 早期取 0.45 / 0.94，删除要拖到将近屏幕边缘，手感又远又晚，故收紧到下面这组。
+ * 归档页模式只有「原位 / 删除」两个锚点，删除落在 0.58 上更顺手。
+ */
+private const val SwipeArchiveFrac = 0.28f
+private const val SwipeDeleteFrac = 0.58f
+
+/**
  * 左滑进度达到这个比例后，底色与文案从「归档」切换为「删除」。
  *
- * 必须与两个锚点的沉降分界一致：Archive = -0.45w、Delete = -0.94w，
- * AnchoredDraggable 默认在相邻锚点中点判定，即 0.695w。取 0.70 让「看到红色 = 松手就删」
- * 成立；否则 0.62~0.695 这一段显示「删除」却会落到归档，视觉与结果对不上。
+ * 必须与两个锚点的沉降分界一致：Archive = -SwipeArchiveFrac、Delete = -SwipeDeleteFrac，
+ * AnchoredDraggable 默认在相邻锚点中点判定，即 (0.28 + 0.58) / 2 = 0.43。
+ * 取中点让「看到红色 = 松手就删」成立；否则刚变红的那一段却会落回归档，视觉与结果对不上。
  */
-private const val SwipeDeleteSwitchFrac = 0.70f
+private const val SwipeDeleteSwitchFrac = (SwipeArchiveFrac + SwipeDeleteFrac) / 2f
 
 /**
  * 首页筛选状态（搜索词 + 分类 + 空间 + 列表模式）：由导航层持有，进出编辑页后回来仍保留。
@@ -181,7 +191,8 @@ class HomeFilterState(
     var listMode by mutableStateOf(listMode)
 
     companion object {
-        const val ALL = "all"
+        /** 与「全部分类」的虚拟 id 同值：筛选值直接当作颜色覆盖表的键用。 */
+        const val ALL = Categories.ALL
         const val MODE_COUNTDOWN = "countdown"
         const val MODE_CYCLE = "cycle"
 
@@ -267,7 +278,7 @@ fun HomeScreen(
     }
 
     // 只在多选态拦截返回；主页本身不拦截，交给系统处理，
-    // 这样「返回桌面」才能走 ColorOS 的预测性返回动画（缩小到桌面图标）。
+    // 走系统默认的退出动画（预测性返回已关闭，不再有「缩小到桌面图标」的预览）。
     BackHandler(enabled = selectMode) {
         selectMode = false
         selected = emptySet()
@@ -344,8 +355,11 @@ fun HomeScreen(
     val sections: List<Pair<ExpiryStatus?, List<ExpiryItem>>> = remember(grouped, archivedMode) {
         if (archivedMode) listOf(null to filtered) else grouped.map { it.first to it.second }
     }
-    val categoryLabel = if (filter.category == HomeFilterState.ALL) "全部分类"
-    else store.categoryOptions().firstOrNull { it.id == filter.category }?.label ?: "全部分类"
+    // 标签左侧的色点跟候选菜单同源（同一分类定义 / 「全部分类」的颜色覆盖），且始终显示
+    val selectedCategory = if (filter.category == HomeFilterState.ALL) null
+    else store.categoryOptions().firstOrNull { it.id == filter.category }
+    val categoryLabel = selectedCategory?.label ?: Categories.ALL_LABEL
+    val categoryDotColor = store.categoryColorOf(filter.category)
 
     // 可左右切换的分类环 =「全部分类」+ 当前列表下至少有一条记录的分类。
     // 空分类不进环，滑动不会切出一片空白；这里刻意不跟搜索词联动，避免搜索时环忽长忽短，
@@ -982,15 +996,14 @@ fun HomeScreen(
                         .padding(start = 16.dp, end = 16.dp, top = 10.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    // 4 张及以上收窄内边距和字号，保证 5 张也能一行放得下
-                    val dense = statCards.size >= 4
+                    // 尺寸固定成一套紧凑值：张数增减时整行高度不变，
+                    // 不要按张数切换大小，否则整条统计栏会跟着长高/变矮。
                     for (card in statCards) {
-                        StatCard(
+                        StatCardView(
                             count = card.status?.let { countOf(grouped, it) } ?: filtered.size,
                             label = card.label,
                             accent = card.status?.let { hexColor(it.color) }
                                 ?: MaterialTheme.colorScheme.onSurface,
-                            dense = dense,
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -1044,7 +1057,8 @@ fun HomeScreen(
                                 // 容器宽度定死，这里换文字不会引起布局跳动；
                                 // 竖向滚动淡入，和列表的横向滑动呼应出「翻页」的方向感
                                 AnimatedContent(
-                                    targetState = categoryLabel,
+                                    // 用「文字+色点颜色」做 key，色点随标签一起滚动切换
+                                    targetState = categoryLabel to categoryDotColor,
                                     transitionSpec = {
                                         val up = slideDir > 0
                                         (slideInVertically(tween(180)) { h -> if (up) h else -h } +
@@ -1054,12 +1068,24 @@ fun HomeScreen(
                                     },
                                     modifier = Modifier.weight(1f),
                                     label = "categoryLabel",
-                                ) { label ->
-                                    Text(
-                                        label,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                    )
+                                ) { (label, dotColor) ->
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        // 与下拉候选项同款：10dp 圆角方块色点；「全部分类」用它的颜色覆盖
+                                        Box(
+                                            Modifier
+                                                .size(10.dp)
+                                                .background(
+                                                    hexColor(dotColor),
+                                                    RoundedCornerShape(5.dp),
+                                                )
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            label,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
                                 }
                                 Spacer(Modifier.width(6.dp))
                                 Icon(
@@ -1076,9 +1102,16 @@ fun HomeScreen(
                         ) {
                             // 每一项右侧显示该分类的记录数（未归档，随搜索词联动）
                             DropdownMenuItem(
-                                text = { Text("全部分类") },
-                                // 占位，让文案与下面带色点的分类项左对齐
-                                leadingIcon = { Box(Modifier.size(10.dp)) },
+                                text = { Text(Categories.ALL_LABEL) },
+                                // 与其它分类同一位置、同尺寸的色点（颜色在分类管理里可改）
+                                leadingIcon = {
+                                    Box(
+                                        Modifier.size(10.dp).background(
+                                            hexColor(store.categoryColorOf(HomeFilterState.ALL)),
+                                            RoundedCornerShape(5.dp),
+                                        )
+                                    )
+                                },
                                 trailingIcon = { CountBadge(keywordMatched.size) },
                                 onClick = {
                                     selectCategory(HomeFilterState.ALL)
@@ -1599,13 +1632,16 @@ private fun CountBadge(count: Int) {
     )
 }
 
-/** 参考稿统计卡：白底、居中彩色大数字 + 灰色标签。[dense] 用于 4 张以上时收窄，避免一行放不下。 */
+/**
+ * 参考稿统计卡：白底、居中彩色数字 + 灰色标签。
+ * 尺寸固定成一套紧凑值（原来 5 张时的规格）——张数变化时行高、字号都不变，
+ * 不要再按张数切换大小，否则选卡数量一变整条统计栏就跟着长高/变矮。
+ */
 @Composable
-private fun StatCard(
+private fun StatCardView(
     count: Int,
     label: String,
     accent: Color,
-    dense: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     // 与搜索框、分类行同一套磨砂浮起效果：半透明面板 + 立体描边 + 柔投影。
@@ -1614,15 +1650,11 @@ private fun StatCard(
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(
-                    horizontal = if (dense) 8.dp else 14.dp,
-                    vertical = if (dense) 10.dp else 12.dp,
-                )
+                .padding(horizontal = 8.dp, vertical = 10.dp)
         ) {
             Text(
                 "$count",
-                style = if (dense) MaterialTheme.typography.titleLarge
-                else MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = accent,
                 maxLines = 1,
@@ -1691,8 +1723,8 @@ internal fun ItemRow(
             swipeState.updateAnchors(
                 DraggableAnchors {
                     RowSwipeStage.Settled at 0f
-                    if (!archivedMode) RowSwipeStage.Archive at -rowWidthPx * 0.45f
-                    RowSwipeStage.Delete at -rowWidthPx * 0.94f
+                    if (!archivedMode) RowSwipeStage.Archive at -rowWidthPx * SwipeArchiveFrac
+                    RowSwipeStage.Delete at -rowWidthPx * SwipeDeleteFrac
                 },
             )
         }
@@ -1761,7 +1793,7 @@ internal fun ItemRow(
                 )
             }
             // 删除段（红底）：保留原来的 error 色。
-            // 归档页没有「归档」段，红底必须从 0 就跟手出现，否则拖到 70% 之前是一片空白。
+            // 归档页没有「归档」段，红底必须从 0 就跟手出现，否则拖到切换点之前是一片空白。
             Box(
                 Modifier
                     .matchParentSize()

@@ -18,8 +18,9 @@ import kotlin.math.abs
 /**
  * 左边缘跟手返回手势（参考酷安的做法）。
  *
- * ColorOS 17 不分发预测性返回进度（onBackProgressed 恒为 0，左右边缘皆然），
- * 酷安是把左边缘申请了系统手势排除后自己处理触摸。这里同样：
+ * 预测性返回已在 Manifest 里彻底关闭（enableOnBackInvokedCallback=false），
+ * 系统不会下发 onBackProgressed，也没有可用的系统进度；
+ * 酷安的做法是把左边缘申请了系统手势排除后自己处理触摸。这里同样：
  * 铺一条 32dp 左边缘手势区并调用 systemGestureExclusion() 从系统手势里排除
  * （系统对排除矩形有约 200dp 高度配额，超出部分仍走系统返回 → 回落到
  * 原有的按钮同款转场），拖拽进度完全由自己的触摸事件驱动。

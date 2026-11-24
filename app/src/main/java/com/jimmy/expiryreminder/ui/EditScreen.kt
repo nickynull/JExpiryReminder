@@ -315,11 +315,15 @@ fun EditScreen(
         }
     }
 
-    // 自动推算到期日
-    LaunchedEffect(productionDate, shelfLifeText, unit, manualExpire) {
+    // 自动推算到期日（循环任务按「起始日 + 周期」推进，不减一天）
+    LaunchedEffect(productionDate, shelfLifeText, unit, manualExpire, repeatEnabled) {
         if (!manualExpire) {
             val amount = shelfLifeText.toIntOrNull() ?: 0
-            expireAt = ExpiryCalc.computeExpireAt(productionDate, amount, unit)
+            expireAt = if (repeatEnabled) {
+                ExpiryCalc.computeCycleExpireAt(productionDate, amount, unit)
+            } else {
+                ExpiryCalc.computeExpireAt(productionDate, amount, unit)
+            }
         }
     }
 
@@ -520,8 +524,8 @@ fun EditScreen(
                 scope.launch { scrollState.animateScrollTo(0) }
                 return
             }
-            // 循环任务的到期日只认「上次完成日 + 周期」，忽略任何可能残留的手动日期
-            expireAt = ExpiryCalc.computeExpireAt(productionDate, amount, unit)
+            // 循环任务的到期日只认「上次完成日 + 周期」（不减一天），忽略任何可能残留的手动日期
+            expireAt = ExpiryCalc.computeCycleExpireAt(productionDate, amount, unit)
         }
         if (expireAt.isEmpty()) {
             showError("请填写到期日期（生产日期 + 有效期，或手动指定）")
@@ -559,7 +563,13 @@ fun EditScreen(
         }
     }
 
-    Box(Modifier.fillMaxSize()) {
+    // 页面底：整页铺「底色」，表单卡片才是纯白。之前这里没画底，
+    // 一直沿用根部 Surface 的白（=卡片色），白卡落在白底上只能靠一条浅描边硬撑边界。
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+    ) {
         Column(Modifier.fillMaxSize().imePadding()) {
             // 紧凑头部：单行标题，副标题说明去掉，把纵向空间全部让给表单
             Surface(color = MaterialTheme.colorScheme.background) {
@@ -842,7 +852,7 @@ fun EditScreen(
                                     shelfLifeText = "30"
                                     unit = ShelfLifeUnit.day
                                 }
-                                expireAt = ExpiryCalc.computeExpireAt(
+                                expireAt = ExpiryCalc.computeCycleExpireAt(
                                     productionDate, shelfLifeText.toIntOrNull() ?: 30, unit,
                                 )
                             }
@@ -2381,24 +2391,30 @@ private fun Modifier.dashedBorder(color: Color, cornerRadius: Dp): Modifier = dr
     )
 }
 
-/** 分组卡片：统一圆角、浅描边与内边距，长表单拆开后不再是一整块白板。 */
+/**
+ * 分组卡片：纯白卡片 + 全站统一的描边/柔投影（[frostedPanel]），浮在页面底色上。
+ *
+ * 为什么不再用 `Surface(color = surface, tonalElevation = 1.dp)`：
+ * 编辑页的页面底就是底色（#F8F8F8），卡片必须靠「纯白 + 边界」跳出来；Surface 那套
+ * 只给一条 0.7 透明的 outlineVariant 描边，落在底色上几乎看不见，卡片会和页面糊成一片。
+ */
 @Composable
 private fun FormCard(content: @Composable ColumnScope.() -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-        border = androidx.compose.foundation.BorderStroke(
-            1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f),
-        ),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(
-            Modifier.fillMaxWidth().padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            content = content,
-        )
-    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .frostedPanel(
+                shape = RoundedCornerShape(18.dp),
+                // 表单卡是「面」不是「浮层」，阴影比保存胶囊（14dp）收一半，避免多卡叠阴影发脏
+                elevation = 6.dp,
+                fill = MaterialTheme.colorScheme.surface,
+                // 卡片要的是实心白，不是磨砂半透：底下的页面底色不该从卡面透出来
+                fillAlpha = 1f,
+            )
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        content = content,
+    )
 }
 
 /** 表单分组标题：主色文字 + 细分割线，把长表单切成三段，视觉层级更清楚。 */

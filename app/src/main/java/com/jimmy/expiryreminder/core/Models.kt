@@ -70,10 +70,21 @@ fun List<CategoryDef>.orderedBy(order: List<String>): List<CategoryDef> {
 fun List<CategoryDef>.hasNameConflict(name: String, exceptId: String? = null): Boolean {
     val target = name.trim()
     if (target.isEmpty()) return false
+    // 「全部分类」是分类管理里的保留行，被自定义分类占用会让人分不清哪个是真的筛选项
+    if (target.equals(Categories.ALL_LABEL, ignoreCase = true)) return true
     return any { it.id != exceptId && it.label.trim().equals(target, ignoreCase = true) }
 }
 
 object Categories {
+    /**
+     * 「全部分类」是筛选用的虚拟 id（不对应任何真实分类，物品的 category 永远不会等于它）：
+     * 首页默认停在这里，看到的是所有分类的物品。颜色可改，覆盖记录存在 categoryColors 里。
+     */
+    const val ALL = "all"
+    const val ALL_LABEL = "全部分类"
+    /** 未配置覆盖时的默认色，与兜底分类「其他」同色。 */
+    const val ALL_COLOR = "#909399"
+
     val BUILTIN = listOf(
         CategoryDef("food", "食品", "#E6A23C"),
         CategoryDef("medicine", "药品", "#F56C6C"),
@@ -104,7 +115,7 @@ object Categories {
 // ---------------------------------------------------------------- 空间
 
 /**
- * 空间：物品的归属容器（我的空间 / 爸妈家 / 公司…）。
+ * 空间：物品的归属容器（我的空间 / 我的房间 / 公司…）。
  *
  * 与「分类」是两个正交维度：分类描述物品是什么，空间描述物品归谁管。
  * 每个物品属于且仅属于一个空间；跨设备分享时接收方指定落到哪个空间。
@@ -515,32 +526,50 @@ enum class ExpiryStatus { expired, soon, month, normal;
 
 object ExpiryCalc {
     /**
+     * 起始日 + 周期得到的终点日；起始日非法或周期非正时返回 null。
+     * 整月/整年走日历月推进（月末由 LocalDate 自动收敛）。
+     */
+    private fun endOfSpan(
+        productionDate: String,
+        amount: Int,
+        unit: ShelfLifeUnit,
+    ): java.time.LocalDate? {
+        val start = Dates.parseISO(productionDate) ?: return null
+        if (amount <= 0) return null
+        val span = floor(amount.toDouble()).toInt()
+        return if (unit == ShelfLifeUnit.day) {
+            start.plusDays(span.toLong())
+        } else {
+            start.plusMonths((if (unit == ShelfLifeUnit.year) span * 12 else span).toLong())
+        }
+    }
+
+    /**
      * 由起始日期 + 有效期推算「最后一天有效」的到期日，条件不足返回空串。
      *
      * 有效期按含首尾的自然日计算：2026-11-10 生产、有效期 1 个月 → 2026-12-09。
      * 整月/整年在月末收敛后再减一天（1 月 31 日 + 1 月 → 2 月 27 日）。
      */
     fun computeExpireAt(productionDate: String, amount: Int, unit: ShelfLifeUnit): String {
-        val start = Dates.parseISO(productionDate) ?: return ""
-        if (amount <= 0) return ""
-        val span = floor(amount.toDouble()).toInt()
-        val end = if (unit == ShelfLifeUnit.day) {
-            start.plusDays(span.toLong())
-        } else {
-            start.plusMonths((if (unit == ShelfLifeUnit.year) span * 12 else span).toLong())
-        }
+        val end = endOfSpan(productionDate, amount, unit) ?: return ""
         return Dates.toISODate(end.minusDays(1))
+    }
+
+    /**
+     * 循环任务的下次到期日：起始日 + 周期，**不**减一天。
+     *
+     * 与 [computeExpireAt] 的「含首尾」口径不同：循环任务按整天数推进，
+     * 起始日 11-10、周期 1 个月 → 12-10；周期 1 天 → 次日。
+     */
+    fun computeCycleExpireAt(productionDate: String, amount: Int, unit: ShelfLifeUnit): String {
+        val end = endOfSpan(productionDate, amount, unit) ?: return ""
+        return Dates.toISODate(end)
     }
 
     /**
      * 循环物品完成本次后进入下一周期：以实际完成日为新起点，重新推导到期日，
      * 并清空本周期的提醒记录，让新周期的同一档位能再次触发。
      * 非循环物品或周期不合法时原样返回。
-     *
-     * 周期 1 天的特例：本周期只覆盖完成日当天，完成即翻篇。下一周期若仍从完成日起算，
-     * 到期日恒等于完成日（起始日+1−1=起始日），每天任务永远停在「今天到期」，
-     * 点「完成本次」永远推不动——到期日改从明天起算（「起始日+周期−1」公式不变，
-     * 仅起点越过本周期覆盖日）；「上次完成日」仍如实记录今天。
      */
     fun advanceCycle(
         item: ExpiryItem,
@@ -549,12 +578,7 @@ object ExpiryCalc {
     ): ExpiryItem {
         if (!item.repeatEnabled || item.shelfLife <= 0) return item
         val start = Dates.toISODate(today)
-        val cycleStart = if (item.shelfLifeUnit == ShelfLifeUnit.day && item.shelfLife == 1) {
-            Dates.toISODate(today.plusDays(1))
-        } else {
-            start
-        }
-        val nextExpire = computeExpireAt(cycleStart, item.shelfLife, item.shelfLifeUnit)
+        val nextExpire = computeCycleExpireAt(start, item.shelfLife, item.shelfLifeUnit)
         if (nextExpire.isEmpty()) return item
         return item.copy(
             productionDate = start,

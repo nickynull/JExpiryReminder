@@ -9,12 +9,15 @@ import org.json.JSONObject
 /**
  * 主页顶部统计卡的可选项。key 存进设置，label 是界面文案；
  * status 为空表示「全部」（不按状态过滤）。
+ *
+ * **枚举顺序就是卡片顺序**（读取时 `normalize` 按 entries 重排）：
+ * 全部 → 正常 → 30天内 → 7天内 → 已过期，从最宽松排到最紧迫。
  */
 enum class StatCard(val key: String, val label: String, val status: ExpiryStatus?) {
     All("all", "全部", null),
-    Soon("soon", "7天内", ExpiryStatus.soon),
-    Month("month", "30天内", ExpiryStatus.month),
     Normal("normal", "正常", ExpiryStatus.normal),
+    Month("month", "30天内", ExpiryStatus.month),
+    Soon("soon", "7天内", ExpiryStatus.soon),
     Expired("expired", "已过期", ExpiryStatus.expired);
 
     companion object {
@@ -62,8 +65,8 @@ class SettingsStore private constructor() {
 
     /** 同一 Wi-Fi 下自动发现设备并合并数据；默认关闭，老用户升级后不受影响。 */
 
-    /** 流体云 / Live Update 提醒：仅 Android 16+ 且有系统支持时生效，否则自动降级。 */
-    private val _liveUpdateEnabled = MutableStateFlow(true)
+    /** 流体云 / Live Update 提醒：仅 Android 16+ 且有系统支持时生效，否则自动降级。默认关闭（它会产生一条用户滑不掉的常驻通知）。 */
+    private val _liveUpdateEnabled = MutableStateFlow(false)
     val liveUpdateEnabled: StateFlow<Boolean> get() = _liveUpdateEnabled
 
     /** 开机后是否恢复 30 分钟一次的自动同步排程。 */
@@ -77,9 +80,12 @@ class SettingsStore private constructor() {
 
     fun load(context: Context) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val raw = prefs.getString(KEY_SETTINGS, null) ?: return
+            val raw = prefs.getString(KEY_SETTINGS, null) ?: return
         try {
             val map = JSONObject(raw)
+            // 旧版本（<8）流体云默认开启，现改为默认关闭：老存档里已写入 true 的一律按关闭处理，
+            // 只在用户升级后再主动打开时才持久化 true
+            val settingsVersion = map.optInt("version", 0)
             _themeMode.value = ThemeMode.fromName(map.optStringOrNull("theme"))
             if (map.has("notifyEnabled") && !map.isNull("notifyEnabled")) {
                 _notifyEnabled.value = map.optBoolean("notifyEnabled", true)
@@ -93,8 +99,10 @@ class SettingsStore private constructor() {
                 _useAlarmClock.value = map.optBoolean("useAlarmClock", true)
             }
             // 自动同步默认关闭；旧版本没有这个键时保持默认，不写回
-            if (map.has("liveUpdateEnabled") && !map.isNull("liveUpdateEnabled")) {
-                _liveUpdateEnabled.value = map.optBoolean("liveUpdateEnabled", true)
+            when {
+                settingsVersion < 8 -> _liveUpdateEnabled.value = false
+                map.has("liveUpdateEnabled") && !map.isNull("liveUpdateEnabled") ->
+                    _liveUpdateEnabled.value = map.optBoolean("liveUpdateEnabled", false)
             }
             if (map.has("hideNotificationDetail") && !map.isNull("hideNotificationDetail")) {
                 _hideNotificationDetail.value = map.optBoolean("hideNotificationDetail", false)
@@ -135,7 +143,7 @@ class SettingsStore private constructor() {
             .putString(
                 KEY_SETTINGS,
                 JSONObject()
-                    .put("version", 7)
+                    .put("version", 8)
                     .put("theme", _themeMode.value.name)
                     .put("notifyEnabled", _notifyEnabled.value)
                     .put("notifyTime", _notifyTime.value)

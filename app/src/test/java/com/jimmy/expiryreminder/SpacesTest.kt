@@ -58,9 +58,9 @@ class SpacesTest {
     @Test
     fun `自定义空间解析与脏数据`() {
         val ok = SpaceInfo.fromJson(
-            JSONObject().put("id", "sp_1").put("label", "爸妈家").put("color", "#67C23A"),
+            JSONObject().put("id", "sp_1").put("label", "我的房间").put("color", "#67C23A"),
         )!!
-        assertEquals("爸妈家", ok.label)
+        assertEquals("我的房间", ok.label)
         assertEquals("#67C23A", ok.color)
 
         // 非法颜色回落灰色；空名字、占用内置 id 的空间直接丢弃
@@ -73,10 +73,10 @@ class SpacesTest {
 
     @Test
     fun `空间重名判断忽略大小写与空格`() {
-        val list = listOf(SpaceDef("sp_1", "Office", "#67C23A"), SpaceDef("sp_2", "爸妈家", "#67C23A"))
+        val list = listOf(SpaceDef("sp_1", "Office", "#67C23A"), SpaceDef("sp_2", "我的房间", "#67C23A"))
         assertTrue(list.hasSpaceNameConflict(" office "))
-        assertTrue(list.hasSpaceNameConflict("爸妈家"))
-        assertFalse(list.hasSpaceNameConflict("爸妈家", exceptId = "sp_2"))
+        assertTrue(list.hasSpaceNameConflict("我的房间"))
+        assertFalse(list.hasSpaceNameConflict("我的房间", exceptId = "sp_2"))
         assertFalse(list.hasSpaceNameConflict("  "))
         // 「未分配」「全部空间」都是保留字
         assertTrue(list.hasSpaceNameConflict("未分配"))

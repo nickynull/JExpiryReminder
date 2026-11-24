@@ -131,7 +131,11 @@ class ExpiryStore private constructor() {
 
     fun categoryLabelOf(id: String): String = categoryOf(id)?.label ?: id
 
-    fun categoryColorOf(id: String): String = categoryOf(id)?.color ?: "#909399"
+    fun categoryColorOf(id: String): String = when {
+        // 「全部分类」不是真分类，颜色走覆盖表；没配过就用默认灰
+        id == Categories.ALL -> _state.value.categoryColors[id] ?: Categories.ALL_COLOR
+        else -> categoryOf(id)?.color ?: Categories.ALL_COLOR
+    }
 
     /**
      * 该分类在「新增物品」时预填的提前提醒天数；没配置过返回空列表（= 不预选任何档位）。
@@ -313,13 +317,14 @@ class ExpiryStore private constructor() {
                 (0 until rawCategories.length()).mapNotNull { CustomCategory.fromJson(rawCategories.opt(it)) }
             } else emptyList()
 
-            // 内置分类的颜色覆盖：只留内置 id + 合法色值
+            // 内置分类的颜色覆盖：只留内置 id（+「全部分类」）+ 合法色值
             val colors = LinkedHashMap<String, String>()
             val storedColors = stored?.optJSONObject("categoryColors")
             if (storedColors != null) {
                 for (key in storedColors.keys()) {
                     val value = storedColors.optStringOrNull(key)
-                    if (isBuiltinCategory(key) && value != null && isHexColor(value)) {
+                    val known = isBuiltinCategory(key) || key == Categories.ALL
+                    if (known && value != null && isHexColor(value)) {
                         colors[key] = value
                     }
                 }
@@ -500,24 +505,15 @@ class ExpiryStore private constructor() {
             val advanced = ExpiryCalc.advanceCycle(
                 current, today, Dates.nowIsoTimestamp(),
             )
-            // 周期 1 天的循环任务完成今天后，下一周期到期日仍是今天（起始日+周期−1），
-            // 不能拿「到期日没变」当无变化的判据——否则每天任务点「完成本次」永远没反应。
-            // 上次完成日也已推进到今天（当天重复点击）才算真正无变化。
+            // 新周期到期日 = 完成日 + 周期，必然晚于完成日，正常情况下一定变化。
+            // 只有同一天重复点「完成本次」时两个字段都不变，视为无变化直接返回。
             if (advanced.expireAt == current.expireAt &&
                 advanced.productionDate == current.productionDate
             ) {
                 return@withLock
             }
-            // 到期日没变（当天到期当天完成）：保留本周期已提醒记录。
-            // notifiedKeys 的 key 带日期，明天是新 key 照常提醒；若这里清空，
-            // 完成动作引发的整包重排会立刻把今天已过的定点提醒补发一条，纯属打扰。
-            val settled = if (advanced.expireAt == current.expireAt) {
-                advanced.copy(notifiedKeys = current.notifiedKeys)
-            } else {
-                advanced
-            }
-            nextExpire = settled.expireAt
-            list[index] = settled
+            nextExpire = advanced.expireAt
+            list[index] = advanced
             _state.value = _state.value.copy(items = list)
             persistLocked(context)
         }
@@ -748,7 +744,7 @@ class ExpiryStore private constructor() {
         return ok
     }
 
-    /** 修改分类颜色。自定义分类直接改自身，内置分类记进覆盖表。 */
+    /** 修改分类颜色。自定义分类直接改自身，内置分类与「全部分类」记进覆盖表。 */
     suspend fun setCategoryColor(context: Context, id: String, color: String) {
         if (!isHexColor(color)) return
         mutex.withLock {
@@ -760,11 +756,15 @@ class ExpiryStore private constructor() {
                 _state.value = current.copy(
                     categories = current.categories.toMutableList().also { it[catIndex] = old.copy(color = color) }
                 )
-            } else if (isBuiltinCategory(id)) {
+            } else if (isBuiltinCategory(id) || id == Categories.ALL) {
+                // 与「全部空间」同款：只影响界面显示，保持默认色时不写冗余记录
                 if (current.categoryColors[id] == color) return
-                _state.value = current.copy(
-                    categoryColors = current.categoryColors + (id to color)
-                )
+                val next = if (color == Categories.ALL_COLOR && id == Categories.ALL) {
+                    current.categoryColors - id
+                } else {
+                    current.categoryColors + (id to color)
+                }
+                _state.value = current.copy(categoryColors = next)
             } else return
             persistLocked(context)
         }
@@ -907,6 +907,24 @@ class ExpiryStore private constructor() {
             if (!overrideable) return
             if (current.spaceColors[key] == color) return
             _state.value = current.copy(spaceColors = current.spaceColors + (key to color))
+            persistLocked(context)
+        }
+    }
+
+    /**
+     * 拖动排序：传入完整的空间 id 顺序。
+     * 未知 id 丢掉、漏掉的空间按现有顺序补在后面，所以调用方只给「看得见的那些」也不会丢空间。
+     * 空间顺序就是 [State.spaces] 的列表顺序（落盘即按此顺序写入），不额外存一份 order 表。
+     */
+    suspend fun reorderSpaces(context: Context, ids: List<String>) {
+        mutex.withLock {
+            val current = _state.value
+            val known = current.spaces.map { it.id }
+            val kept = ids.filter { it in known }.distinct()
+            val merged = kept + known.filter { it !in kept }
+            if (merged == known) return
+            val byId = current.spaces.associateBy { it.id }
+            _state.value = current.copy(spaces = merged.mapNotNull { byId[it] })
             persistLocked(context)
         }
     }

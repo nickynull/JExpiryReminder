@@ -7,7 +7,7 @@
 ## 构建
 
 ```bash
-# 环境变量（本机已具备）：JAVA_HOME=.jdks/microsoft-jdk-17，ANDROID_HOME=AppData/Local/Android/Sdk
+# 环境变量（已写入用户级环境变量）：JAVA_HOME=%USERPROFILE%\.jdks\microsoft-jdk-17，ANDROID_HOME=%USERPROFILE%\AppData\Local\Android\Sdk
 ./gradlew assembleDebug        # 产物 app/build/outputs/apk/debug/app-debug.apk（约 33MB）
 ./gradlew testDebugUnitTest    # 61 个单元测试
 ./gradlew installDebug         # 连接设备安装
@@ -23,7 +23,7 @@ Gradle 走腾讯镜像、Maven 走阿里云镜像，无需代理。
 - **物品管理**：名称 / 空间 / 分类 / 生产日期 / 有效期（天·月·年，月末自动收敛）/ 到期日
   （可由生产日期+有效期推算，也可手动指定）/ 数量 / 备注；
   新增时默认「食品」，若主页正按某分类筛选则自动预选该分类
-- **空间归属**：物品归入某个空间（我的空间 / 爸妈家 / 公司…），也可以不归属任何空间（「未分配」，新增时默认如此）；
+- **空间归属**：物品归入某个空间（我的空间 / 我的房间 / 公司…），也可以不归属任何空间（「未分配」，新增时默认如此）；
   顶部胶囊切换空间，默认「全部空间」（所有空间 + 未分配一起看），列表、统计卡、分类计数都跟着空间走；
   空间可改名、换色、删除（删除空间不会删除物品，空间里的物品会变成「未分配」）；
   **「全部空间」「我的空间」「未分配」的颜色都可改**，记在 data.json 的 `spaceColors` 里

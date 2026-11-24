@@ -7,16 +7,20 @@ import android.net.Uri
 import android.provider.Settings as AndroidSettings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -58,9 +62,15 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -108,6 +118,9 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
     var showClearConfirm by remember { mutableStateOf(false) }
     var showLiveDetail by remember { mutableStateOf(false) }
     var showReliabilityDetail by remember { mutableStateOf(false) }
+    // 「?」图标打开的说明弹窗；与动作类弹窗分开，避免整行点击误触
+    var activeHelp by remember { mutableStateOf<SettingHelp?>(null) }
+    val clipboard = LocalClipboardManager.current
 
     // 权限/能力状态每次回到前台都重新读一遍：用户去系统设置改完回来能立刻看到结果
     var reliabilityTick by remember { mutableStateOf(0) }
@@ -131,10 +144,10 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
         !liveUpdateEnabled -> "已关闭，只保留逐条到期通知"
         !liveStatus.supported -> "系统低于 Android 16，不支持实时动态"
         liveStatus.promoted -> "已提升为实时动态 / 状态栏胶囊"
-        !liveStatus.canPost -> "系统未允许发布实时动态，点此去开启"
+        !liveStatus.canPost -> "系统未允许发布实时动态，点「?」去开启"
         !liveStatus.active -> "当前没有 7 天内到期物品，或汇总尚未发布"
         liveStatus.promotable == false -> "通知不满足系统提升条件"
-        else -> "已请求提升但暂未提升，点此可重发"
+        else -> "已请求提升但暂未提升，点「?」可重发"
     }
     // 已配对设备数：以长期信任表为准（水位文件只说明「同步过」，不代表仍被信任）
 
@@ -221,8 +234,11 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
         ) {
             SettingsSection("通知与提醒")
 
+            SettingGroupCard {
             ListItem(
-                headlineContent = { Text("启用到期通知") },
+                headlineContent = {
+                    HelpTitle(SettingsHelp.Notify, onShow = { activeHelp = SettingsHelp.Notify })
+                },
                 supportingContent = { Text("关闭后不再推送任何提醒") },
                 trailingContent = {
                     AppSwitch(
@@ -238,7 +254,9 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
             )
 
             ListItem(
-                headlineContent = { Text("推送时刻") },
+                headlineContent = {
+                    HelpTitle(SettingsHelp.NotifyTime, onShow = { activeHelp = SettingsHelp.NotifyTime })
+                },
                 supportingContent = { Text("每天 $notifyTime 推送到期提醒") },
                 trailingContent = {
                     OutlinedButton(onClick = {
@@ -251,7 +269,9 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
             )
 
             ListItem(
-                headlineContent = { Text("闹钟式提醒") },
+                headlineContent = {
+                    HelpTitle(SettingsHelp.AlarmClock, onShow = { activeHelp = SettingsHelp.AlarmClock })
+                },
                 supportingContent = {
                     Text("状态栏显示闹钟图标，抗系统省电清理最稳；关闭后提醒可能延后")
                 },
@@ -269,9 +289,10 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
             )
 
             ListItem(
-                headlineContent = { Text("流体云提醒") },
+                headlineContent = {
+                    HelpTitle(SettingsHelp.LiveUpdate, onShow = { showLiveDetail = true })
+                },
                 supportingContent = { Text(liveStatusText) },
-                modifier = Modifier.clickable { showLiveDetail = true },
                 trailingContent = {
                     AppSwitch(
                         checked = liveUpdateEnabled,
@@ -288,7 +309,9 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
             )
 
             ListItem(
-                headlineContent = { Text("锁屏隐藏详情") },
+                headlineContent = {
+                    HelpTitle(SettingsHelp.HideDetail, onShow = { activeHelp = SettingsHelp.HideDetail })
+                },
                 supportingContent = { Text("开启后锁屏只显示「到期提醒」，解锁后才看得到物品名") },
                 trailingContent = {
                     AppSwitch(
@@ -309,28 +332,34 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
             )
 
             ListItem(
-                headlineContent = { Text("后台运行保障") },
+                headlineContent = {
+                    HelpTitle(SettingsHelp.BackgroundRun, onShow = { showReliabilityDetail = true })
+                },
                 supportingContent = {
                     Text(
                         buildString {
                             append(if (exactGranted) "精确闹钟已授予" else "精确闹钟未授予")
                             append(" · ")
                             append(if (batteryIgnored) "已忽略电池优化" else "未忽略电池优化")
-                            append("\n点此检查权限并查看各机型自启动设置")
+                            append("\n点「检查」查看权限与各机型自启动设置")
                         },
                     )
                 },
-                modifier = Modifier.clickable { showReliabilityDetail = true },
                 trailingContent = { TextButton(onClick = { showReliabilityDetail = true }) { Text("检查") } },
             )
 
+            }
+
             SettingsSection("外观与显示")
 
+            SettingGroupCard {
             ListItem(
-                headlineContent = { Text("主题") },
+                headlineContent = {
+                    HelpTitle(SettingsHelp.Theme, onShow = { activeHelp = SettingsHelp.Theme })
+                },
                 supportingContent = { Text("桌面小组件同步跟随应用主题") },
             )
-            // 横向单选项，三档并排一行
+            // 横向单选项，三档并排一行；分组卡内直接排列，不再单独包 Surface
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -363,16 +392,19 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
             }
 
             ListItem(
-                headlineContent = { Text("主页统计卡") },
+                headlineContent = {
+                    HelpTitle(SettingsHelp.StatCards, onShow = { activeHelp = SettingsHelp.StatCards })
+                },
                 supportingContent = { Text(statCards.joinToString(" / ") { it.label }) },
-                modifier = Modifier.clickable { showStatCards = true },
                 trailingContent = {
                     TextButton(onClick = { showStatCards = true }) { Text("选择") }
                 },
             )
 
             ListItem(
-                headlineContent = { Text("刷新桌面小组件") },
+                headlineContent = {
+                    HelpTitle(SettingsHelp.RefreshWidgets, onShow = { activeHelp = SettingsHelp.RefreshWidgets })
+                },
                 supportingContent = { Text("主题或数据未及时更新时，可手动刷新一次") },
                 trailingContent = {
                     TextButton(onClick = {
@@ -382,20 +414,29 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
                 },
             )
 
+            }
+
             SettingsSection("跨设备同步")
 
+            SettingGroupCard {
             ListItem(
-                headlineContent = { Text("跨设备分享") },
+                headlineContent = {
+                    HelpTitle(SettingsHelp.Transfer, onShow = { activeHelp = SettingsHelp.Transfer })
+                },
                 supportingContent = { Text("同一 Wi-Fi 下与另一台设备配对，双向传输物品记录") },
                 trailingContent = {
                     OutlinedButton(onClick = onTransfer) { Text("打开") }
                 },
             )
+            }
 
             SettingsSection("数据与备份")
 
+            SettingGroupCard {
             ListItem(
-                headlineContent = { Text("导出备份") },
+                headlineContent = {
+                    HelpTitle(SettingsHelp.Export, onShow = { activeHelp = SettingsHelp.Export })
+                },
                 supportingContent = { Text("打包 data.json 与全部图片（.zip）") },
                 trailingContent = {
                     OutlinedButton(onClick = { exportLauncher.launch(Backup.backupFileName()) }) {
@@ -405,7 +446,9 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
             )
 
             ListItem(
-                headlineContent = { Text("导入备份") },
+                headlineContent = {
+                    HelpTitle(SettingsHelp.Import, onShow = { activeHelp = SettingsHelp.Import })
+                },
                 supportingContent = { Text("支持本应用导出的备份") },
                 trailingContent = {
                     OutlinedButton(onClick = {
@@ -415,7 +458,9 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
             )
 
             ListItem(
-                headlineContent = { Text("清空全部数据") },
+                headlineContent = {
+                    HelpTitle(SettingsHelp.ClearData, onShow = { activeHelp = SettingsHelp.ClearData })
+                },
                 supportingContent = { Text("删除所有物品与图片，不可恢复") },
                 trailingContent = {
                     TextButton(onClick = { showClearConfirm = true }) {
@@ -423,9 +468,11 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
                     }
                 },
             )
+            }
 
             SettingsSection("关于")
 
+            SettingGroupCard {
             ListItem(
                 headlineContent = { Text("到期提醒") },
                 supportingContent = { Text("作者：Jimmy & Sunny") },
@@ -441,11 +488,20 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
             ListItem(
                 headlineContent = { Text("GitHub 项目地址") },
                 supportingContent = { Text(GITHUB_URL.removePrefix("https://")) },
-                modifier = Modifier.clickable { openUrl(context, GITHUB_URL) },
                 trailingContent = {
-                    TextButton(onClick = { openUrl(context, GITHUB_URL) }) { Text("打开") }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = {
+                            clipboard.setText(AnnotatedString(GITHUB_URL))
+                            scope.launch { snackbar.showSnackbar("项目地址已复制") }
+                        }) {
+                            Icon(CopyIcon, contentDescription = "复制项目地址")
+                        }
+                        // 打开浏览器只走这个按钮，整行不再响应点击
+                        TextButton(onClick = { openUrl(context, GITHUB_URL) }) { Text("打开") }
+                    }
                 },
             )
+            }
         }
     }
 
@@ -594,15 +650,14 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
             onDismissRequest = { showLiveDetail = false },
             title = { Text("流体云提醒") },
             text = {
-                Column {
+                Column(
+                    Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
                     Text("当前状态：$liveStatusText")
                     Spacer(Modifier.height(8.dp))
-                    Text(
-                        "7 天内到期物品会合成一条常驻提醒；能否显示为流体云由系统决定。" +
-                            "普通到期通知与流体云是两条链路，互不影响。若状态未提升，" +
-                            "先确认系统里的实时活动开关，再点「重发」。",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
+                    Text(SettingsHelp.LiveUpdate.body, style = MaterialTheme.typography.bodyMedium)
                 }
             },
             confirmButton = {
@@ -619,6 +674,11 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
                 }
             },
         )
+    }
+
+    // 「?」打开的说明弹窗
+    activeHelp?.let { help ->
+        SettingHelpDialog(help = help, onDismiss = { activeHelp = null })
     }
 
     if (showReliabilityDetail) {
@@ -660,6 +720,22 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
                 TextButton(onClick = { showReliabilityDetail = false }) { Text("知道了") }
             },
         )
+    }
+}
+
+/** 设置卡片统一规格：14dp 圆角；描边是白卡从灰底里浮出来的关键（Theme.kt 定案）。 */
+private val SettingCardShape = RoundedCornerShape(14.dp)
+
+/** 一个设置分组 = 一张整卡；组内条目直接纵向排列，不再单独成卡。 */
+@Composable
+private fun SettingGroupCard(content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        shape = SettingCardShape,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    ) {
+        Column(content = content)
     }
 }
 
@@ -711,14 +787,15 @@ private fun PermissionRow(
 /** 平铺设置分组标题：只做视觉分节，不折叠、不点击。 */
 @Composable
 private fun SettingsSection(title: String) {
-    Column(Modifier.fillMaxWidth().padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 4.dp)) {
+    // 分组下已是整卡，标题下的分隔线去掉，避免与卡片描边叠加显乱；
+    // 标题与卡片贴紧（bottom 只留 2dp），分组之间的留白由 top 16dp 负责
+    Column(Modifier.fillMaxWidth().padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 2.dp)) {
         Text(
             title,
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
             fontWeight = FontWeight.SemiBold,
         )
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     }
 }
 
@@ -749,6 +826,43 @@ private fun openBatterySettings(activity: Activity?, context: Context) {
 
 /** 关于页展示的项目主页。 */
 private const val GITHUB_URL = "https://github.com/nickynull/JExpiryReminder"
+
+/** 复制图标：material-icons-core 不含 ContentCopy，按官方路径手绘同款。 */
+private val CopyIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "ContentCopy",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply {
+        path(fill = SolidColor(Color.Black)) {
+            moveTo(16f, 1f)
+            horizontalLineTo(4f)
+            curveToRelative(-1.1f, 0f, -2f, 0.9f, -2f, 2f)
+            verticalLineToRelative(14f)
+            horizontalLineToRelative(2f)
+            verticalLineTo(3f)
+            horizontalLineTo(16f)
+            close()
+            moveTo(19f, 5f)
+            horizontalLineTo(8f)
+            curveToRelative(-1.1f, 0f, -2f, 0.9f, -2f, 2f)
+            verticalLineToRelative(14f)
+            curveToRelative(0f, 1.1f, 0.9f, 2f, 2f, 2f)
+            horizontalLineTo(19f)
+            curveToRelative(1.1f, 0f, 2f, -0.9f, 2f, -2f)
+            verticalLineTo(7f)
+            curveToRelative(0f, -1.1f, -0.9f, -2f, -2f, -2f)
+            close()
+            moveTo(19f, 21f)
+            horizontalLineTo(8f)
+            verticalLineTo(7f)
+            horizontalLineTo(19f)
+            close()
+        }
+    }.build()
+}
 
 /** 用浏览器打开外部链接；系统无浏览器时静默忽略。 */
 private fun openUrl(context: Context, url: String) {

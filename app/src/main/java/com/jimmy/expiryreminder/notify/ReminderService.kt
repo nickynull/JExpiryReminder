@@ -269,7 +269,7 @@ object ReminderService {
         notifyEnabled: Boolean,
         notifyTime: String,
         useAlarmClock: Boolean = true,
-        liveUpdateEnabled: Boolean = true,
+        liveUpdateEnabled: Boolean = false,
     ) {
         val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         // 先清掉全部旧闹钟
@@ -517,7 +517,7 @@ object ReminderService {
      * 倒计时物品维持原规则：到期日落在 [0, LIVE_WINDOW_DAYS] 天内即上云。
      *
      * 循环任务走独立规则：除窗口限制外，还必须命中用户设置的提醒档位
-     * ([ExpiryItem.remindDays])才上云。原因是循环任务的到期日恒为「完成日 + 周期 − 1」，
+     * ([ExpiryItem.remindDays])才上云。原因是循环任务的到期日恒为「完成日 + 周期」，
      * 周期 ≤7 天时到期日永远落在 0..7 窗口内，若套用倒计时规则会长期常驻流体云；
      * 要求命中提醒档位后，上云时点与闹钟提醒保持一致——没设提醒天数的循环任务完全不上云，
      * 设了档位的只在对应天数当天上云。

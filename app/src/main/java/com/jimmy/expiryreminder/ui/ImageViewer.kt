@@ -2,9 +2,9 @@
 
 package com.jimmy.expiryreminder.ui
 
-import android.content.res.Resources
 import android.graphics.BitmapFactory
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
@@ -17,10 +17,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.pager.HorizontalPager
@@ -40,14 +37,19 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -57,10 +59,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import com.jimmy.expiryreminder.core.ImageStore
 import com.jimmy.expiryreminder.core.normalizeImagePath
 import kotlinx.coroutines.Dispatchers
@@ -91,9 +94,30 @@ data class ImageOrigin(
  * 打开时从 [origin] 指定的缩略图位置放大（背景淡入到纯黑，参考酷安）；关闭有两条路：
  * 点按/返回键 → 直接缩回该位置；单指拖拽 → 图片跟手位移（横向阻尼）并轻微缩小、
  * 背景同步变透明，松手按位移/速度决定「从当前位置收回到缩略图」或「回弹全屏」。
- * 收回末段交叉淡入一张与缩略图一致的方形图，形状过渡无跳变。
+ * 收回终点与来源缩略图同矩形、同 Crop 取景（同一个盒子从 fit 矩形形变过去），
+ * 不存在第二张图交叉淡化，落地那一下不会闪。
  * [paths] 为图片相对路径列表（多张时翻页看）。
  */
+/**
+ * 缩回动画：320ms、起步快末端长缓尾（0.25,0.8,0.25,1）。
+ * 240ms 时从整屏缩到 44dp 像「撞」在缩略图上，加长并把速度留给前段，
+ * 末段几乎静止后再贴合，观感才连续。展开仍用 280ms，不需要这么慢。
+ */
+private val CloseSpec = tween<Float>(320, easing = CubicBezierEasing(0.25f, 0.8f, 0.25f, 1f))
+
+/**
+ * 归位到 0 后等两帧再撒 Dialog。
+ *
+ * 少这两帧时，`animateTo(0f)` 刚把值改成 0 就调 `onDismiss()`，Compose 会把
+ * 「progress=0」和「移除 Dialog」合并到同一次提交 —— `t=0` 的画面从没被真正绘制过，
+ * 屏幕上最后留下的仍是上一帧 `t≈0.02` 的中间态（图比缩略图略大、位置略偏上），
+ * 看起来就是「到位后又往上弹了一下才消失」。两帧足以让 `t=0` 先提交并完成绘制。
+ */
+private suspend fun waitForSettledFrame() {
+    withFrameNanos { }
+    withFrameNanos { }
+}
+
 @Composable
 fun ImageViewerOverlay(
     paths: List<String>,
@@ -121,7 +145,8 @@ fun ImageViewerOverlay(
         if (minimizing) return
         minimizing = true
         scope.launch {
-            progress.animateTo(0f, animationSpec = tween(240, easing = FastOutSlowInEasing))
+            progress.animateTo(0f, animationSpec = CloseSpec)
+            waitForSettledFrame()
             onDismiss()
         }
     }
@@ -136,15 +161,18 @@ fun ImageViewerOverlay(
             val startFraction = dragFraction
             coroutineScope {
                 launch {
-                    progress.animateTo(0f, animationSpec = tween(260, easing = FastOutSlowInEasing))
+                    progress.animateTo(0f, animationSpec = CloseSpec)
                 }
                 launch {
-                    animate(0f, 1f, animationSpec = tween(260, easing = FastOutSlowInEasing)) { v, _ ->
+                    // 与盒子归位同一条曲线同时长：两者叠加后的合成轨迹才是单一的、
+                    // 不会出现「先缩一下再往回送」的两段感。
+                    animate(0f, 1f, animationSpec = CloseSpec) { v, _ ->
                         dragOffset = Offset(startOffset.x * (1f - v), startOffset.y * (1f - v))
                         dragFraction = startFraction * (1f - v)
                     }
                 }
             }
+            waitForSettledFrame()
             onDismiss()
         }
     }
@@ -161,48 +189,41 @@ fun ImageViewerOverlay(
         }
     }
 
-    // 返回键 / 侧滑手势走缩回动画。
-    // 关键：Popup 是独立的 focusable window，必须让它自己注册返回回调并映射到 minimize；
-    // 若 dismissOnBackPress=false，事件在 Popup window 就被吞掉，Activity 的 BackHandler 收不到，
-    // 编辑页还会被 MainActivity 的预测性返回回调抢去直接退出页面。
-    BackHandler { minimize() }
-    Popup(
-        alignment = Alignment.TopStart,
-        onDismissRequest = { minimize() },
-        properties = PopupProperties(
-            focusable = true,
-            dismissOnBackPress = true,
-            dismissOnClickOutside = false,
+    // 全屏 Dialog：独立窗口、decorFitsSystemWindows=false 才能盖满整屏（含导航栏区域），
+    // 返回键由内容里的 BackHandler 接住走缩回动画（dismissOnBackPress 关掉，避免直接销毁窗口）。
+    Dialog(
+        onDismissRequest = { },
+        properties = DialogProperties(
             usePlatformDefaultWidth = false,
-            clippingEnabled = false,
+            decorFitsSystemWindows = false,
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false,
         ),
     ) {
+        // Dialog 默认会给下层窗口压暗（FLAG_DIM_BEHIND），与我们的黑色 scrim 叠加
+        // 会让展开/缩回动画期间下层页面变暗，关掉它。
+        val dialogView = LocalView.current
+        LaunchedEffect(dialogView) {
+            (dialogView.parent as? DialogWindowProvider)?.window?.apply {
+                // 我们自己的缩放/淡出已经覆盖整个开合过程，系统窗口动画再叠一层
+                // 会在结束时把整块内容再推一下，看起来像「弹起」。
+                setWindowAnimations(0)
+                setDimAmount(0f)
+            }
+        }
+        BackHandler { minimize() }
         var viewSize by remember { mutableStateOf(Size.Zero) }
         val viewW = viewSize.width.coerceAtLeast(1f)
         val viewH = viewSize.height.coerceAtLeast(1f)
 
-        // 交叉淡化系数：0 = 大图、1 = 方形缩略图。只在缩回末段（p<0.4）切换，
-        // 让「长方形大图」在消失前换成「正方形缩略图」，且两张画面内容一致，无感。
-        val x = ((0.4f - p) / 0.4f).coerceIn(0f, 1f)
-        val thumbAlpha = x * x * (3f - 2f * x) // smoothstep
-        val bigAlpha = 1f - thumbAlpha
         // 顶部控件：随展开淡入，跟手拖拽时按拖拽比例淡出
         val chromeAlpha = ((p / 0.6f).coerceAtMost(1f)) * (1f - dragFraction)
         // 背景压暗：随展开淡入到纯黑（参考酷安），跟手拖拽时同步变透明
         val scrimAlpha = (p * (1f - dragFraction)).coerceIn(0f, 1f)
 
-        // 系统按 insets 裁短 Popup 窗口高度（实测 1440x2912，比整屏矮 224px），
-        // 底部会漏出下方页面且点击穿透（编辑页会误触保存按钮），强制铺满整屏。
-        val density = LocalDensity.current
-        val fullHeight = remember(density) {
-            with(density) {
-                Resources.getSystem().displayMetrics.heightPixels.toFloat().toDp()
-            }
-        }
         Box(
             Modifier
-                .requiredHeight(fullHeight)
-                .fillMaxWidth()
+                .fillMaxSize()
                 .onGloballyPositioned {
                     viewSize = Size(it.size.width.toFloat(), it.size.height.toFloat())
                 }
@@ -229,7 +250,6 @@ fun ImageViewerOverlay(
                     origin = origin,
                     progress = p,
                     minimizing = minimizing,
-                    bigAlpha = bigAlpha,
                     dismissEnabled = !minimizing && p >= 1f,
                     dismissOffset = dragOffset,
                     dismissFraction = dragFraction,
@@ -243,15 +263,6 @@ fun ImageViewerOverlay(
                         if (commit) dismissFromDrag() else cancelDismissDrag()
                     },
                     onTap = { minimize() },
-                )
-            }
-            // 缩回末段淡入的方形缩略图：与来源缩略图同位置、同尺寸、同裁剪、同圆角。
-            // 用当前页图片，翻页后关闭也能对上。
-            if (origin != null && thumbAlpha > 0f) {
-                ThumbOverlay(
-                    path = paths[pagerState.currentPage.coerceIn(0, (count - 1).coerceAtLeast(0))],
-                    origin = origin,
-                    alpha = thumbAlpha,
                 )
             }
             Box(
@@ -296,9 +307,12 @@ fun ImageViewerOverlay(
 }
 
 /**
- * 大图页：图片以自身宽高比居中显示，转场用等比缩放 + 平移（不重新测量布局），
- * 因此展开全程保持图片原比例；手势放大/拖动叠加在转场变换之上，
- * 跟手关闭的位移/缩小再叠加在最外层。转场期间按缩略图圆角裁剪，全屏时收敛为直角。
+ * 大图页：转场不缩放整屏画布，而是**插值盒子自身的位置与尺寸**，图片始终填满盒子
+ * （`ContentScale.Crop`）。
+ * - 盒子 = 缩略图矩形时（progress 0）：Crop 的取景与列表里那张缩略图逐像素一致；
+ * - 盒子 = 居中 fit 矩形时（progress 1）：盒子本身就是图片比例，Crop 与 Fit 画的是同一块画面。
+ * 于是全程只有一层图、一种裁剪，落地那一下不存在第二张图交叉淡化 → 不再闪。
+ * 手势放大/拖动叠加在盒子这层 graphicsLayer 上，跟手关闭的位移/缩小再叠一层。
  */
 @Composable
 private fun ViewerPage(
@@ -307,7 +321,6 @@ private fun ViewerPage(
     origin: ImageOrigin?,
     progress: Float,
     minimizing: Boolean,
-    bigAlpha: Float,
     dismissEnabled: Boolean,
     dismissOffset: Offset,
     dismissFraction: Float,
@@ -316,6 +329,9 @@ private fun ViewerPage(
     onTap: () -> Unit,
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
+    // 手势里要用「视口」而不是视图自身尺寸：转场期间盒子会缩到缩略图大小
+    val viewportState = rememberUpdatedState(viewport)
     val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, path) {
         value = withContext(Dispatchers.IO) {
             val safe = normalizeImagePath(path)
@@ -329,20 +345,25 @@ private fun ViewerPage(
             }
         }
     }
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    // 默认 TopStart 对齐：下面的 offset 就是相对屏幕左上角的绝对位移（盒子坐标 = 屏幕坐标）
+    Box(Modifier.fillMaxSize()) {
         val bmp = bitmap
         if (bmp == null) {
-            CircularProgressIndicator(modifier = Modifier.size(32.dp), strokeWidth = 3.dp)
+            CircularProgressIndicator(
+                modifier = Modifier.align(Alignment.Center).size(32.dp),
+                strokeWidth = 3.dp,
+            )
         } else {
             var scale by remember(bmp) { mutableFloatStateOf(1f) }
             var offset by remember(bmp) { mutableStateOf(Offset.Zero) }
 
-            // 关闭时把手势平滑复位到 1x，保证缩回终点与缩略图完全一致
+            // 关闭时把手势平滑复位到 1x，保证缩回终点与缩略图完全一致。
+            // 用与盒子转场相同的曲线/时长，否则放大后关闭会看到两段速度不同的缩放。
             LaunchedEffect(minimizing) {
                 if (minimizing && (scale != 1f || offset != Offset.Zero)) {
                     val fromScale = scale
                     val fromOffset = offset
-                    animate(0f, 1f, animationSpec = tween(180)) { v, _ ->
+                    animate(0f, 1f, animationSpec = CloseSpec) { v, _ ->
                         scale = fromScale + (1f - fromScale) * v
                         offset = Offset(fromOffset.x * (1f - v), fromOffset.y * (1f - v))
                     }
@@ -352,38 +373,63 @@ private fun ViewerPage(
             val viewW = viewport.width.coerceAtLeast(1f)
             val viewH = viewport.height.coerceAtLeast(1f)
             val fit = fitSize(bmp.width.toFloat(), bmp.height.toFloat(), viewW, viewH)
-            // 起点：把图片等比缩到缩略图宽度、中心对准缩略图中心。
-            // 无起点时退回屏幕中央的 0.18 倍。
-            val startScale = origin?.let { (it.width / fit.width).coerceIn(0.02f, 1f) } ?: 0.18f
-            val startTx = origin?.let { it.x + it.width / 2f - viewW / 2f } ?: 0f
-            val startTy = origin?.let { it.y + it.height / 2f - viewH / 2f } ?: 0f
+            // 转场起止盒子：缩略图矩形 ↔ 屏幕居中的 fit 矩形。
+            // 无 origin（比如从通知进入）时退回屏幕中央、18% 视口宽的方块。
+            val thumbW = origin?.width?.takeIf { it > 0f } ?: (viewW * 0.18f)
+            val thumbH = origin?.height?.takeIf { it > 0f } ?: thumbW
+            val thumbX = origin?.x ?: ((viewW - thumbW) / 2f)
+            val thumbY = origin?.y ?: ((viewH - thumbH) / 2f)
+            val fitX = (viewW - fit.width) / 2f
+            val fitY = (viewH - fit.height) / 2f
             val t = progress.coerceIn(0f, 1f)
-            val remain = 1f - t
-            val transScale = startScale + (1f - startScale) * t
-            val transTx = startTx * remain
-            val transTy = startTy * remain
+            val boxW = thumbW + (fit.width - thumbW) * t
+            val boxH = thumbH + (fit.height - thumbH) * t
+            val boxX = thumbX + (fitX - thumbX) * t
+            val boxY = thumbY + (fitY - thumbY) * t
+            // 屏幕上的圆角：t=1 收敛为直角，与被点缩略图（8dp）严丝合缝
+            val cornerPx = (origin?.cornerRadius ?: 0f) * (1f - t)
+            // 与列表缩略图同一套外框（1dp 描边 + 8dp 圆角），随进度淡入淡出。
+            // 少了这条描边，图片贴到位、Dialog 撤走的那一帧会多出一圈灰边 ——
+            // 那正是「归位后还跳一下」最直接的原因。
+            val outlineColor = MaterialTheme.colorScheme.outline
+            val outlineAlpha = if (origin != null) (1f - t).coerceIn(0f, 1f) else 0f
 
             Image(
                 bitmap = bmp.asImageBitmap(),
                 contentDescription = null,
-                contentScale = ContentScale.Fit,
+                contentScale = ContentScale.Crop,
                 modifier = Modifier
-                    .fillMaxSize()
+                    .size(with(density) { boxW.toDp() }, with(density) { boxH.toDp() })
                     .graphicsLayer {
-                        val totalScale = transScale * scale
-                        val shrink = 1f - 0.12f * dismissFraction
-                        scaleX = totalScale * shrink
-                        scaleY = totalScale * shrink
-                        translationX = transTx + offset.x + dismissOffset.x
-                        translationY = transTy + offset.y + dismissOffset.y
-                        alpha = bigAlpha
-                        // 屏幕上的圆角随转场进度从缩略图圆角收敛到 0（局部半径按总缩放折算）
-                        val screenRadius = (origin?.cornerRadius ?: 0f) * remain
-                        if (screenRadius > 1f && totalScale > 0.05f) {
-                            shape = RoundedCornerShape(screenRadius / totalScale)
-                            clip = true
-                        } else {
-                            clip = false
+                        val s = (scale * (1f - 0.12f * dismissFraction)).coerceAtLeast(0.01f)
+                        scaleX = s
+                        scaleY = s
+                        // 位置放在绘制阶段（float、不取整）：原先走布局 offset + roundToInt，
+                        // 加上 px→dp→px 往返，归位末段会出现 1px 台阶。
+                        translationX = boxX + offset.x + dismissOffset.x
+                        translationY = boxY + offset.y + dismissOffset.y
+                        // 圆角按屏幕像素给，除以当前缩放换成本地图层像素。clip 常开：
+                        // 静止在直角矩形上不切任何内容，也不会因为布尔翻转换渲染层而闪。
+                        shape = RoundedCornerShape((cornerPx / s).toDp())
+                        clip = true
+                    }
+                    .drawWithContent {
+                        drawContent()
+                        if (outlineAlpha > 0.004f) {
+                            // 画在图形层内部，会被按 s 缩放，所以宽度/半径都要先除掉 s
+                            val s = (scale * (1f - 0.12f * dismissFraction)).coerceAtLeast(0.01f)
+                            val stroke = 1.dp.toPx()
+                            val r = (cornerPx / s - stroke / 2f).coerceAtLeast(0f)
+                            drawRoundRect(
+                                color = outlineColor.copy(alpha = outlineAlpha),
+                                topLeft = Offset(stroke / 2f, stroke / 2f),
+                                size = Size(
+                                    (size.width - stroke).coerceAtLeast(0f),
+                                    (size.height - stroke).coerceAtLeast(0f),
+                                ),
+                                cornerRadius = CornerRadius(r),
+                                style = Stroke(width = stroke),
+                            )
                         }
                     }
                     .pointerInput(bmp) {
@@ -401,6 +447,10 @@ private fun ViewerPage(
                     }
                     .pointerInput(bmp, dismissEnabled) {
                         awaitEachGesture {
+                            // 手势判定一律用视口尺寸：盒子转场时会缩到缩略图大小
+                            val vp = viewportState.value
+                            val vw = vp.width.coerceAtLeast(1f)
+                            val vh = vp.height.coerceAtLeast(1f)
                             val down = awaitFirstDown(
                                 requireUnconsumed = false,
                                 pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial,
@@ -417,8 +467,8 @@ private fun ViewerPage(
                                     if (dragging) {
                                         val v = tracker.calculateVelocity()
                                         onDismissSettle(
-                                            abs(total.y) > size.height * 0.28f ||
-                                                abs(total.x) > size.width * 0.28f ||
+                                            abs(total.y) > vh * 0.28f ||
+                                                abs(total.x) > vw * 0.28f ||
                                                 abs(v.y) > 1100f ||
                                                 abs(v.x) > 1100f,
                                         )
@@ -441,7 +491,7 @@ private fun ViewerPage(
                                     scale = (scale * zoom).coerceIn(1f, 5f)
                                     offset = clampOffset(
                                         offset + panDelta, scale,
-                                        size.width.toFloat(), size.height.toFloat(),
+                                        vw, vh,
                                         bmp.width.toFloat(), bmp.height.toFloat(),
                                     )
                                     if (scale <= 1f) offset = Offset.Zero
@@ -450,7 +500,7 @@ private fun ViewerPage(
                                     val change = pressed[0]
                                     offset = clampOffset(
                                         offset + change.positionChange(), scale,
-                                        size.width.toFloat(), size.height.toFloat(),
+                                        vw, vh,
                                         bmp.width.toFloat(), bmp.height.toFloat(),
                                     )
                                     if (scale <= 1f) offset = Offset.Zero
@@ -479,45 +529,6 @@ private fun ViewerPage(
             )
         }
     }
-}
-
-/** 缩回末段淡入的方形缩略图，与来源缩略图像素级一致，消除形状跳变。 */
-@Composable
-private fun ThumbOverlay(path: String, origin: ImageOrigin, alpha: Float) {
-    val context = LocalContext.current
-    val density = LocalDensity.current
-    val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, path) {
-        value = withContext(Dispatchers.IO) {
-            val safe = normalizeImagePath(path)
-            if (safe.isEmpty()) return@withContext null
-            val file = ImageStore.imageFile(context, safe)
-            if (!file.exists()) return@withContext null
-            try {
-                BitmapFactory.decodeFile(file.absolutePath)
-            } catch (_: Exception) {
-                null
-            }
-        }
-    }
-    val bmp = bitmap ?: return
-    Image(
-        bitmap = bmp.asImageBitmap(),
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-        modifier = Modifier
-            .size(
-                width = with(density) { origin.width.toDp() },
-                height = with(density) { origin.height.toDp() },
-            )
-            .offset {
-                IntOffset(
-                    origin.x.roundToInt(),
-                    origin.y.roundToInt(),
-                )
-            }
-            .clip(RoundedCornerShape(with(density) { origin.cornerRadius.toDp() }))
-            .graphicsLayer { this.alpha = alpha },
-    )
 }
 
 /** 图片按 Fit 放进视口后的实际绘制尺寸。 */

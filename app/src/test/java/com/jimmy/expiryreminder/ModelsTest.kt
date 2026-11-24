@@ -88,6 +88,18 @@ class ModelsTest {
     }
 
     @Test
+    fun `computeCycleExpireAt 按起始日加周期计算不减一天`() {
+        assertEquals("2026-10-31", ExpiryCalc.computeCycleExpireAt("2026-10-01", 30, ShelfLifeUnit.day))
+        assertEquals("2026-11-01", ExpiryCalc.computeCycleExpireAt("2026-10-01", 1, ShelfLifeUnit.month))
+        assertEquals("2027-10-01", ExpiryCalc.computeCycleExpireAt("2026-10-01", 1, ShelfLifeUnit.year))
+        assertEquals("2026-12-10", ExpiryCalc.computeCycleExpireAt("2026-11-10", 1, ShelfLifeUnit.month))
+        assertEquals("2026-11-11", ExpiryCalc.computeCycleExpireAt("2026-11-10", 1, ShelfLifeUnit.day))
+        // 条件不足
+        assertEquals("", ExpiryCalc.computeCycleExpireAt("bad", 1, ShelfLifeUnit.day))
+        assertEquals("", ExpiryCalc.computeCycleExpireAt("2026-10-01", 0, ShelfLifeUnit.day))
+    }
+
+    @Test
     fun `循环任务完成本次后进入下一周期并重置提醒记录`() {
         val cycle = item().copy(
             name = "吸尘器滤芯", productionDate = "2026-11-01",
@@ -99,7 +111,8 @@ class ModelsTest {
             cycle, java.time.LocalDate.of(2026, 11, 17), "2026-11-17T09:00:00",
         )
         assertEquals("2026-11-17", advanced.productionDate)
-        assertEquals("2026-12-16", advanced.expireAt)
+        // 完成日 + 30 天，不减一天
+        assertEquals("2026-12-17", advanced.expireAt)
         assertEquals(emptyList<String>(), advanced.notifiedKeys)
         assertEquals("2026-11-17T09:00:00", advanced.updatedAt)
 
@@ -109,8 +122,8 @@ class ModelsTest {
 
     @Test
     fun `周期1天的循环任务完成后下一周期从明天起算`() {
-        // 每天任务：今天到期（expireAt=今天），点「完成本次」后应推进到明天，
-        // 否则到期日恒等于完成日，每天任务永远卡在「今天到期」点不动
+        // 每天任务：今天到期后点「完成本次」，到期日 = 完成日 + 1 天 = 明天；
+        // 因为周期计算不再减一天，无需再对 1 天周期做任何特例
         val daily = item().copy(
             name = "吃药", productionDate = "2026-11-18",
             shelfLife = 1, shelfLifeUnit = ShelfLifeUnit.day,
@@ -124,13 +137,13 @@ class ModelsTest {
         assertEquals("2026-11-19", advanced.expireAt)
         assertEquals(emptyList<String>(), advanced.notifiedKeys)
 
-        // 周期 1 月的任务不受特例影响：仍是完成日 + 1 月 − 1 天
+        // 周期 1 月：完成日 + 1 月，不减一天
         val monthly = item().copy(
             productionDate = "2026-11-18", shelfLife = 1,
             shelfLifeUnit = ShelfLifeUnit.month, expireAt = "2026-11-18", repeatEnabled = true,
         )
         assertEquals(
-            "2026-12-17",
+            "2026-12-18",
             ExpiryCalc.advanceCycle(monthly, java.time.LocalDate.of(2026, 11, 18)).expireAt,
         )
     }

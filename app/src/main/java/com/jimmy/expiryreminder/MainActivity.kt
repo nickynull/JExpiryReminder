@@ -207,8 +207,9 @@ class MainActivity : ComponentActivity() {
                     var exitKind by remember { mutableStateOf(ExitKind.Enter) }
 
                     // —— 跟手返回（左边缘拖拽，参考酷安）——
-                    // 本机 ColorOS 17 不分发预测性返回进度（onBackProgressed 恒为 0，
-                    // 左右边缘皆然），酷安是把左边缘从系统手势里排除后自己处理触摸。
+                    // 预测性返回已在 Manifest 里彻底关闭（enableOnBackInvokedCallback=false），
+                    // 系统不再下发 onBackProgressed，也就没有任何系统进度可用；
+                    // 酷安的做法也是把左边缘从系统手势里排除后自己处理触摸。
                     // 这里同样：BackDragStrip 申请系统手势排除并驱动进度，页面 1:1 跟手
                     // 位移，底层渲染主页 + 随进度减弱的压暗层，松手按位移/速度提交或回弹。
                     var backDragActive by remember { mutableStateOf(false) }
