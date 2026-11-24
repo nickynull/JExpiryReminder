@@ -28,7 +28,7 @@ android {
         // 本地分支 1.27.0：移除语音输入与内置 Vosk 离线模型（APK 回落约 66MB）；
         // 上游 release-please 下次发版会覆盖下面标记之间的值。
         // x-release-please-start-version
-        versionName = "2.1.0"
+        versionName = "2.2.0"
         // x-release-please-end
         val (major, minor, patch) = versionName!!.split(".").map { it.toInt() }
         versionCode = major * 10000 + minor * 100 + patch
