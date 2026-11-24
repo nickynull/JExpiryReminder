@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.0](https://github.com/nickynull/JExpiryReminder/compare/v2.1.0...v2.2.0) (2026-11-24)
+
+
+### Features
+
+* 统一管理页排序组件、两段式左滑、循环任务与流体云行为调整 ([de1cb46](https://github.com/nickynull/JExpiryReminder/commit/de1cb46e6213232461b67ffe31133defc9314553))
+
 ## [2.1.0](https://github.com/nickynull/JExpiryReminder/compare/v2.0.0...v2.1.0) (2026-11-23)
 
 
