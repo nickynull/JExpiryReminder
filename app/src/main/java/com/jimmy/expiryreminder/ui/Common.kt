@@ -13,6 +13,7 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -26,7 +27,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -53,6 +56,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
@@ -469,4 +473,154 @@ private fun ClearFieldButton(onClick: () -> Unit) {
             modifier = Modifier.size(16.dp),
         )
     }
+}
+
+// ---------------------------------------------------------------------------
+// 全站内容卡 / 分组标题 / 主按钮胶囊（2026-11-25 以主页风格统一，勿回退）
+// ---------------------------------------------------------------------------
+
+/**
+ * 全站内容卡：实心白 + 柔影 + 无描边，与主页物品卡同一套浮起语言。
+ *
+ * 之前三种卡片做法并存：主页/编辑页白卡+柔影、设置页白卡+1dp 描边、传输页
+ * surfaceContainerLow 灰卡无装饰；现统一到这里，调用方只选圆角（内容卡一律 18dp）。
+ *
+ * 注意：只适用于落在「页面底色」上的卡。白色面板内部的嵌套块不要用它
+ * （白上叠白只剩阴影一条边），那种场景保留实心主色按钮/Surface。
+ */
+@Composable
+internal fun Modifier.contentCard(shape: Shape = RoundedCornerShape(18.dp)): Modifier =
+    shadow(
+        elevation = 6.dp,
+        shape = shape,
+        clip = false,
+        ambientColor = Color(0x0D000000),
+        spotColor = Color(0x1A000000),
+    )
+        .background(MaterialTheme.colorScheme.surface, shape)
+        .clip(shape)
+
+/**
+ * 主操作磨砂胶囊：[frostedPanel] 的加重阴影版，编辑页保存栏同款。
+ * 同样只适用于页面底色 / 深色底上的页面级主操作；白色面板内部用实心主色按钮。
+ */
+@Composable
+internal fun Modifier.frostedPill(shape: Shape): Modifier =
+    this.frostedPanel(shape = shape, elevation = 14.dp)
+
+/**
+ * 全站分组标题：主色 labelLarge Bold + 细分割线，把长页面切成段。
+ * 设置页 / 编辑页 / 传输页共用，之前三种写法并存。
+ */
+@Composable
+internal fun SectionHeader(title: String, modifier: Modifier = Modifier) {
+    Row(
+        modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.Bold,
+        )
+        Spacer(Modifier.width(10.dp))
+        HorizontalDivider(
+            Modifier.weight(1f),
+            thickness = 1.dp,
+            color = MaterialTheme.colorScheme.outlineVariant,
+        )
+    }
+}
+
+/**
+ * 主页搜索框同款磨砂胶囊输入框：无白底描边框，输入直接嵌在胶囊里。
+ * 分类/空间管理页的「新增」行用它 + [FrostedCircleButton]（2026-11-25）。
+ * [isError] 时文字与占位符转红；inline 错误红字由调用方放在胶囊行下面。
+ */
+@Composable
+internal fun PillInput(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    isError: Boolean = false,
+) {
+    Box(
+        modifier
+            .height(56.dp)
+            .frostedPanel(RoundedCornerShape(28.dp)),
+    ) {
+        Row(
+            Modifier
+                .fillMaxSize()
+                .padding(start = 18.dp, end = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                if (value.isEmpty()) {
+                    Text(
+                        placeholder,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (isError) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        color = if (isError) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            if (value.isNotEmpty()) {
+                // 与主页搜索框同款清空小叉
+                IconButton(
+                    onClick = { onValueChange("") },
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = "清空",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 浮动圆钮：主页搜索栏「新增」同款磨砂圆钮（磨砂底 + 柔影 + 立体描边 + 圆形裁切）。
+ * 无禁用态——主操作需给出错误反馈时由调用方在框外放 inline 红字，而不是灰掉按钮。
+ */
+@Composable
+internal fun FrostedCircleButton(
+    size: Dp,
+    description: String,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        Modifier
+            .size(size)
+            .semantics { contentDescription = description }
+            .frostedPanel(shape = CircleShape, elevation = 12.dp)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { content() }
 }

@@ -30,13 +30,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -48,6 +45,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -122,7 +120,13 @@ fun PickImagesScreen(
 
     val full = uris.size >= MAX_IMAGES
 
-    Column(Modifier.fillMaxSize()) {
+    // 页面底：整页铺「底色」，与主页/编辑页同源；之前只给标题条铺了底色，
+    // 主体一直沿用根部 Surface 的白，看起来是一片白
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+    ) {
         Surface(color = MaterialTheme.colorScheme.background) {
             Row(
                 Modifier
@@ -198,34 +202,63 @@ fun PickImagesScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(
-                    onClick = { launchCamera() },
-                    enabled = !full,
-                    modifier = Modifier.weight(1f).height(44.dp),
-                    shape = RoundedCornerShape(12.dp),
-                ) { Text("拍照") }
-                OutlinedButton(
-                    onClick = {
-                        pickMultiple.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                        )
-                    },
-                    enabled = !full,
-                    modifier = Modifier.weight(1f).height(44.dp),
-                    shape = RoundedCornerShape(12.dp),
-                ) { Text("从相册选择") }
+                // 次级按钮也统一磨砂胶囊：与下方「确定」同语言，落在页面底色上；
+                // 文字用 onSurface 区分主次，主操作才是 primary
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                        .frostedPanel(RoundedCornerShape(22.dp))
+                        .alpha(if (full) 0.45f else 1f)
+                        .clickable(enabled = !full) { launchCamera() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "拍照",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                        .frostedPanel(RoundedCornerShape(22.dp))
+                        .alpha(if (full) 0.45f else 1f)
+                        .clickable(enabled = !full) {
+                            pickMultiple.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "从相册选择",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
             }
             Spacer(Modifier.height(10.dp))
-            Button(
-                onClick = { onConfirm(uris.toList()) },
-                enabled = uris.isNotEmpty(),
-                modifier = Modifier.fillMaxWidth().height(50.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                ),
+            // 主操作磨砂胶囊：与编辑页保存栏同款（Common.frostedPill），
+            // 落在页面底色上，不再用实心蓝底按钮
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(50.dp)
+                    .frostedPill(RoundedCornerShape(25.dp))
+                    .alpha(if (uris.isNotEmpty()) 1f else 0.45f)
+                    .clickable(enabled = uris.isNotEmpty()) { onConfirm(uris.toList()) },
+                contentAlignment = Alignment.Center,
             ) {
-                Text("确定（${uris.size}/$MAX_IMAGES）", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "确定（${uris.size}/$MAX_IMAGES）",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
             }
             if (full) {
                 Spacer(Modifier.height(6.dp))

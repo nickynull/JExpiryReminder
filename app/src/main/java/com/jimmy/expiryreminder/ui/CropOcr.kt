@@ -30,7 +30,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -47,6 +46,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect as UiRect
@@ -296,14 +296,25 @@ fun CropOcrOverlay(
                     ) {
                         if (noteOnly) {
                             if (res.rawLines.isNotEmpty()) {
-                                Button(
-                                    onClick = {
-                                        onPickNote(res.rawLines.joinToString("\n"))
-                                        onDismiss()
-                                    },
-                                    modifier = Modifier.fillMaxWidth().height(42.dp),
-                                    shape = RoundedCornerShape(12.dp),
-                                ) { Text("全部加入备注") }
+                                // 主操作磨砂胶囊：与编辑页保存栏同款（Common.frostedPill）
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .height(42.dp)
+                                        .frostedPill(RoundedCornerShape(21.dp))
+                                        .clickable {
+                                            onPickNote(res.rawLines.joinToString("\n"))
+                                            onDismiss()
+                                        },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        "全部加入备注",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
                                 ResultSection("识别文字（点一行单独加入）")
                                 for (line in res.rawLines) {
                                     Text(
@@ -356,69 +367,93 @@ fun CropOcrOverlay(
                         modifier = Modifier.weight(1f).height(46.dp),
                         shape = RoundedCornerShape(12.dp),
                     ) { Text("重选") }
-                    Button(
-                        onClick = {
-                            if (running) return@Button
-                            val start = dragStart
-                            val end = dragEnd
-                            // 有有效框就走区域识别；noteOnly 下无框则整图识别
-                            var crop: Rect? = null
-                            if (start != null && end != null) {
-                                val left = min(start.x, end.x).roundToInt()
-                                val top = min(start.y, end.y).roundToInt()
-                                val right = max(start.x, end.x).roundToInt()
-                                val bottom = max(start.y, end.y).roundToInt()
-                                if (right - left >= 24 && bottom - top >= 24) {
-                                    crop = Rect(left, top, right, bottom)
-                                }
-                            }
-                            if (!noteOnly && crop == null) return@Button
-
-                            running = true
-                            results = null
-                            emptyHint = false
-                            scope.launch {
-                                val region = crop
-                                val lines = runCatching {
-                                    if (region != null) {
-                                        val long = max(region.width(), region.height())
-                                        OcrEngine.recognizeRegionFile(
-                                            ImageStore.imageFile(context, path),
-                                            region,
-                                            (long * 2.5f).roundToInt().coerceIn(800, 1536),
-                                        )
-                                    } else {
-                                        OcrEngine.recognizeFile(ImageStore.imageFile(context, path))
-                                    }
-                                }.getOrDefault(emptyList())
-                                results = buildResults(lines)
-                                emptyHint = lines.isEmpty()
-                                running = false
-                            }
-                        },
-                        enabled = !running && (noteOnly || (dragStart != null && dragEnd != null)),
-                        modifier = Modifier.weight(2f).height(46.dp),
-                        shape = RoundedCornerShape(12.dp),
-                    ) {
-                        if (running) {
-                            CircularProgressIndicator(
-                                Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                                color = Color.White,
+                    OutlinedButton(
+                        onClick = { clearSelection() },
+                        enabled = !running,
+                        modifier = Modifier.weight(1f).height(46.dp),
+                        shape = MaterialTheme.shapes.small,
+                    ) { Text("重选") }
+                    // 主操作磨砂胶囊：落在深色取景底上，白玻璃胶囊与主页同语言；
+                    // 白卡内部的行内按钮不能用这套（白上叠白不可见），保留实心 M3 Button
+                    Box(
+                        Modifier
+                            .weight(2f)
+                            .height(46.dp)
+                            .frostedPill(RoundedCornerShape(23.dp))
+                            .alpha(
+                                if (!running && (noteOnly || (dragStart != null && dragEnd != null))) {
+                                    1f
+                                } else {
+                                    0.45f
+                                },
                             )
-                            Spacer(Modifier.width(8.dp))
+                            .clickable {
+                                if (running) return@clickable
+                                val start = dragStart
+                                val end = dragEnd
+                                // 有有效框就走区域识别；noteOnly 下无框则整图识别
+                                var crop: Rect? = null
+                                if (start != null && end != null) {
+                                    val left = min(start.x, end.x).roundToInt()
+                                    val top = min(start.y, end.y).roundToInt()
+                                    val right = max(start.x, end.x).roundToInt()
+                                    val bottom = max(start.y, end.y).roundToInt()
+                                    if (right - left >= 24 && bottom - top >= 24) {
+                                        crop = Rect(left, top, right, bottom)
+                                    }
+                                }
+                                if (!noteOnly && crop == null) return@clickable
+
+                                running = true
+                                results = null
+                                emptyHint = false
+                                scope.launch {
+                                    val region = crop
+                                    val lines = runCatching {
+                                        if (region != null) {
+                                            val long = max(region.width(), region.height())
+                                            OcrEngine.recognizeRegionFile(
+                                                ImageStore.imageFile(context, path),
+                                                region,
+                                                (long * 2.5f).roundToInt().coerceIn(800, 1536),
+                                            )
+                                        } else {
+                                            OcrEngine.recognizeFile(ImageStore.imageFile(context, path))
+                                        }
+                                    }.getOrDefault(emptyList())
+                                    results = buildResults(lines)
+                                    emptyHint = lines.isEmpty()
+                                    running = false
+                                }
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (running) {
+                                CircularProgressIndicator(
+                                    Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            val buttonText = if (noteOnly) {
+                                val s = dragStart
+                                val e = dragEnd
+                                val validBox = s != null && e != null &&
+                                    max(s.x, e.x) - min(s.x, e.x) >= 24f &&
+                                    max(s.y, e.y) - min(s.y, e.y) >= 24f
+                                if (validBox) "识别圈选区" else "整图识别"
+                            } else {
+                                if (dragStart == null) "先拖一个框" else "识 别"
+                            }
+                            Text(
+                                buttonText,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
                         }
-                        val buttonText = if (noteOnly) {
-                            val s = dragStart
-                            val e = dragEnd
-                            val validBox = s != null && e != null &&
-                                max(s.x, e.x) - min(s.x, e.x) >= 24f &&
-                                max(s.y, e.y) - min(s.y, e.y) >= 24f
-                            if (validBox) "识别圈选区" else "整图识别"
-                        } else {
-                            if (dragStart == null) "先拖一个框" else "识 别"
-                        }
-                        Text(buttonText)
                     }
                 }
             }

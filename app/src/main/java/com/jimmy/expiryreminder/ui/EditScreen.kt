@@ -2369,13 +2369,7 @@ private fun StepCell(symbol: String, enabled: Boolean, onClick: () -> Unit) {
     }
 }
 
-/**
- * 保存/取消按钮的「磨砂浮起」胶囊：柔投影 + 半透明面板色 + 立体描边。
- * 统一走 Common.kt 的 frostedPanel（阴影色、描边渐变与全站一致），elevation 沿用 14dp。
- */
-@Composable
-private fun Modifier.frostedPill(shape: Shape): Modifier =
-    this.frostedPanel(shape = shape, elevation = 14.dp)
+// frostedPill 已提取到 Common.kt 作为全站主按钮胶囊，编辑页/选图页/裁剪页共用
 
 /** 虚线描边修饰符（native Canvas 实现，Compose 官方 border 不支持 dash）。 */
 private fun Modifier.dashedBorder(color: Color, cornerRadius: Dp): Modifier = drawBehind {    val paint = android.graphics.Paint().apply {
@@ -2403,38 +2397,17 @@ private fun FormCard(content: @Composable ColumnScope.() -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
-            .frostedPanel(
-                shape = RoundedCornerShape(18.dp),
-                // 表单卡是「面」不是「浮层」，阴影比保存胶囊（14dp）收一半，避免多卡叠阴影发脏
-                elevation = 6.dp,
-                fill = MaterialTheme.colorScheme.surface,
-                // 卡片要的是实心白，不是磨砂半透：底下的页面底色不该从卡面透出来
-                fillAlpha = 1f,
-            )
+            // 全站内容卡统一：实心白 + 柔影无描边（Common.contentCard），2026-11-25 起
+            // 不再走 frostedPanel 的描边版（与主页物品卡/设置页/传输页同一套浮起语言）
+            .contentCard(RoundedCornerShape(18.dp))
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
         content = content,
     )
 }
 
-/** 表单分组标题：主色文字 + 细分割线，把长表单切成三段，视觉层级更清楚。 */
+/** 表单分组标题：主色文字 + 细分割线；实现收拢到 Common.SectionHeader 全站共用。 */
 @Composable
 private fun EditSectionHeader(title: String) {
-    Row(
-        Modifier.fillMaxWidth().padding(top = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            title,
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.Bold,
-        )
-        Spacer(Modifier.width(10.dp))
-        HorizontalDivider(
-            Modifier.weight(1f),
-            thickness = 1.dp,
-            color = MaterialTheme.colorScheme.outlineVariant,
-        )
-    }
+    SectionHeader(title, Modifier.fillMaxWidth().padding(top = 2.dp))
 }

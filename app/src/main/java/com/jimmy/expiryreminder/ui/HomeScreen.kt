@@ -1508,10 +1508,8 @@ private fun HomeFloatingBar(
                 }
             }
             // 拍照：从搜索框里独立出来的浮动圆钮，夹在搜索和新增中间
-            FloatCircleButton(
+            FrostedCircleButton(
                 size = 56.dp,
-                fill = MaterialTheme.colorScheme.surface,
-                elevation = 12.dp,
                 description = "拍照识别",
                 onClick = onOcr,
             ) {
@@ -1522,10 +1520,8 @@ private fun HomeFloatingBar(
                 )
             }
             // 新增：与搜索框同一套磨砂浮起效果，+ 号用主色保持主操作辨识度
-            FloatCircleButton(
+            FrostedCircleButton(
                 size = 56.dp,
-                fill = MaterialTheme.colorScheme.surface,
-                elevation = 12.dp,
                 description = "新增",
                 onClick = onAdd,
             ) {
@@ -1540,31 +1536,7 @@ private fun HomeFloatingBar(
     }
 }
 
-/** 浮动圆钮：磨砂底 + 阴影 + 立体描边 + 圆形裁切，尺寸、阴影由调用方定。 */
-@Composable
-private fun FloatCircleButton(
-    size: Dp,
-    fill: Color,
-    elevation: Dp,
-    description: String,
-    onClick: () -> Unit,
-    borderColor: Color? = null,
-    content: @Composable () -> Unit,
-) {
-    Box(
-        Modifier
-            .size(size)
-            .semantics { contentDescription = description }
-            .frostedPanel(
-                shape = CircleShape,
-                elevation = elevation,
-                fill = fill,
-                borderColor = borderColor,
-            )
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) { content() }
-}
+// FloatCircleButton 已提取到 Common.kt 的 FrostedCircleButton（管理页新增圆钮共用）
 
 /**
  * 切分类的进场效果：整块内容沿滑动方向滑入并淡入（progress 为 0 时完全归位）。
@@ -1760,8 +1732,9 @@ internal fun ItemRow(
         if (off.isNaN() || off == 0f) 0f else 1f
     }
 
-    // 卡片圆角：色条内缩量、底色裁切都用它，避免三处各写一个数字后对不齐
-    val cardShape = RoundedCornerShape(24.dp)
+    // 卡片圆角：色条内缩量、底色裁切都用它，避免三处各写一个数字后对不齐。
+    // 2026-11-25 全站内容卡统一 18dp（原 24dp），左滑底色/色条共用此值自动跟随
+    val cardShape = RoundedCornerShape(18.dp)
 
     Box(Modifier.onSizeChanged { rowWidthPx = it.width }) {
         // ------------------------------------------ 左滑底色（黄=归档段 / 红=删除段）

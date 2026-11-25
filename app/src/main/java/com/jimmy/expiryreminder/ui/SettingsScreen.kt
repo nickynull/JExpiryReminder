@@ -7,7 +7,6 @@ import android.net.Uri
 import android.provider.Settings as AndroidSettings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -50,6 +49,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -216,7 +216,8 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = { Text("设置") },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                title = { Text("设置", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -496,8 +497,9 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
                         }) {
                             Icon(CopyIcon, contentDescription = "复制项目地址")
                         }
-                        // 打开浏览器只走这个按钮，整行不再响应点击
-                        TextButton(onClick = { openUrl(context, GITHUB_URL) }) { Text("打开") }
+                        // 打开浏览器只走这个按钮，整行不再响应点击；
+                        // 「打开」类跳转动作统一 OutlinedButton，与跨设备传输入口一致
+                        OutlinedButton(onClick = { openUrl(context, GITHUB_URL) }) { Text("打开") }
                     }
                 },
             )
@@ -576,7 +578,6 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
                 Surface(
                     shape = RoundedCornerShape(28.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    tonalElevation = 6.dp,
                 ) {
                     Column(Modifier.padding(horizontal = 20.dp, vertical = 20.dp)) {
                         Text(
@@ -723,20 +724,20 @@ fun SettingsScreen(onBack: () -> Unit, onTransfer: () -> Unit) {
     }
 }
 
-/** 设置卡片统一规格：14dp 圆角；描边是白卡从灰底里浮出来的关键（Theme.kt 定案）。 */
-private val SettingCardShape = RoundedCornerShape(14.dp)
+/** 设置卡片统一规格：与全站内容卡一致 18dp 圆角（2026-11-25 统一，原 14dp）。 */
+private val SettingCardShape = RoundedCornerShape(18.dp)
 
 /** 一个设置分组 = 一张整卡；组内条目直接纵向排列，不再单独成卡。 */
 @Composable
 private fun SettingGroupCard(content: @Composable ColumnScope.() -> Unit) {
-    Surface(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-        shape = SettingCardShape,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-    ) {
-        Column(content = content)
-    }
+    // 全站内容卡统一：实心白 + 柔影（Common.contentCard），不再用描边版（2026-11-25）
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .contentCard(SettingCardShape),
+        content = content,
+    )
 }
 
 /** 对话框内的权限状态行：左侧标题+说明，右侧状态或操作按钮。 */
@@ -787,15 +788,10 @@ private fun PermissionRow(
 /** 平铺设置分组标题：只做视觉分节，不折叠、不点击。 */
 @Composable
 private fun SettingsSection(title: String) {
-    // 分组下已是整卡，标题下的分隔线去掉，避免与卡片描边叠加显乱；
+    // 分组下已是整卡，标题下的分隔线交给 Common.SectionHeader 统一画；
     // 标题与卡片贴紧（bottom 只留 2dp），分组之间的留白由 top 16dp 负责
     Column(Modifier.fillMaxWidth().padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 2.dp)) {
-        Text(
-            title,
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.SemiBold,
-        )
+        SectionHeader(title)
     }
 }
 

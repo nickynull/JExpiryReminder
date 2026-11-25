@@ -33,11 +33,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,6 +46,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -60,6 +61,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -126,7 +128,8 @@ fun CategoryScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("分类管理") },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                title = { Text("分类管理", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -196,7 +199,7 @@ fun CategoryScreen(onBack: () -> Unit) {
             )
         }
 
-        // 新增区悬浮胶囊：与首页/编辑页同一套磨砂浮起，列表从它下面穿过；
+        // 新增区悬浮条：主页搜索栏同款——磨砂胶囊输入 + 磨砂圆钮（不再包一层磨砂面板），
         // navigationBarsPadding 抬到手势横条之上，imePadding 让键盘弹起时跟着上移
         Column(
             Modifier
@@ -204,39 +207,41 @@ fun CategoryScreen(onBack: () -> Unit) {
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .imePadding()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-                .frostedPanel(RoundedCornerShape(20.dp))
-                .padding(horizontal = 12.dp, vertical = 12.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // 与首页搜索、编辑页字段同款：48dp 高、10dp 圆角，带一键清空
-                InputBox(
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                PillInput(
                     value = newLabel,
                     onValueChange = { newLabel = it; newError = null },
                     placeholder = "新增分类名称",
-                    fixedHeight = 48.dp,
-                    showClear = true,
                     isError = newError != null,
                     modifier = Modifier.weight(1f),
                 )
-                Spacer(Modifier.width(10.dp))
-                Button(
+                FrostedCircleButton(
+                    size = 56.dp,
+                    description = "添加分类",
                     onClick = ::submitNew,
-                    enabled = newLabel.isNotBlank(),
-                    // 与空间管理、传输页、录入页统一：10dp 圆角，不用默认胶囊形
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.height(48.dp),
                 ) {
-                    Text("添加")
+                    // 与主页「新增」同款：+ 号用主色；空名点击交给 inline 红字反馈
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(28.dp),
+                    )
                 }
             }
-            // 错误文案放到框外，输入框本身不被撑高、两行内容也不会一起跳
+            // 错误文案放到框外，胶囊行不被撑高、两行内容也不会一起跳
             newError?.let { msg ->
                 Text(
                     msg,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(start = 12.dp, top = 4.dp),
+                    modifier = Modifier.padding(start = 18.dp, top = 4.dp),
                 )
             }
         }

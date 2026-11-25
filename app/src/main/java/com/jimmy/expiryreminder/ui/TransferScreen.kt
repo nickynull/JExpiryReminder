@@ -38,6 +38,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -49,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -193,7 +195,8 @@ fun TransferScreen(itemIds: List<String>, onBack: () -> Unit) {
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = { Text("跨设备传输") },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                title = { Text("跨设备传输", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -296,10 +299,11 @@ fun TransferScreen(itemIds: List<String>, onBack: () -> Unit) {
 
             // ---------------------------------------------- 空间同步
             SectionLabel("空间同步")
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                modifier = Modifier.fillMaxWidth(),
+            // 全站内容卡统一：白卡+柔影（Common.contentCard），不再用灰卡
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .contentCard(),
             ) {
                 Column(Modifier.padding(14.dp)) {
                     Text(
@@ -320,7 +324,7 @@ fun TransferScreen(itemIds: List<String>, onBack: () -> Unit) {
                         Box {
                             OutlinedButton(
                                 onClick = { syncSpaceMenu = true },
-                                shape = RoundedCornerShape(10.dp),
+                                shape = MaterialTheme.shapes.small,
                             ) {
                                 Text(chosen?.let { store.spaceLabelOf(it) } ?: "选择要同步的空间")
                             }
@@ -840,10 +844,10 @@ private val TransferPayload.ImportAction.label: String
 
 @Composable
 private fun Card(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = Modifier.fillMaxWidth(),
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .contentCard(),
     ) {
         Column(Modifier.padding(14.dp), content = content)
     }
@@ -851,12 +855,8 @@ private fun Card(content: @Composable androidx.compose.foundation.layout.ColumnS
 
 @Composable
 private fun SectionLabel(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 2.dp, top = 16.dp, bottom = 8.dp),
-    )
+    // 分组标题统一走 Common.SectionHeader，与设置/编辑页同款
+    SectionHeader(text, Modifier.padding(start = 2.dp, top = 16.dp, bottom = 8.dp))
 }
 
 /** 搜索多久没结果就展示自查卡。 */
@@ -904,7 +904,7 @@ private fun SearchHelpCard(
             OutlinedButton(
                 onClick = onRetry,
                 enabled = canRetry,
-                shape = RoundedCornerShape(10.dp),
+                shape = MaterialTheme.shapes.small,
             ) { Text("重试搜索") }
             Spacer(Modifier.width(8.dp))
             Button(onClick = onManual, shape = RoundedCornerShape(10.dp)) { Text("手动连接") }
@@ -920,10 +920,10 @@ private fun PeerRow(
     canSync: Boolean,
     onSync: () -> Unit,
 ) {
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = Modifier.fillMaxWidth(),
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .contentCard(),
     ) {
         Row(
             Modifier
@@ -948,14 +948,14 @@ private fun PeerRow(
             if (canSync) {
                 OutlinedButton(
                     onClick = onSync,
-                    shape = RoundedCornerShape(10.dp),
+                    shape = MaterialTheme.shapes.small,
                     modifier = Modifier.padding(end = 8.dp),
                 ) { Text("同步") }
             }
             Button(
                 onClick = onSend,
                 enabled = canSend,
-                shape = RoundedCornerShape(10.dp),
+                shape = MaterialTheme.shapes.small,
             ) {
                 Text(if (canSend) "发送" else "先选物品")
             }
@@ -969,10 +969,10 @@ private fun IncomingCard(
     onReceive: () -> Unit,
     onDiscard: () -> Unit,
 ) {
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = Modifier.fillMaxWidth(),
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .contentCard(),
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1072,7 +1072,7 @@ private fun SpacePickDialog(onPick: (String) -> Unit, onDismiss: () -> Unit) {
                     OutlinedButton(
                         onClick = { createAndSelect() },
                         enabled = newLabel.isNotBlank() && !creating,
-                        shape = RoundedCornerShape(10.dp),
+                        shape = MaterialTheme.shapes.small,
                         modifier = Modifier.height(44.dp),
                     ) { Text("新建") }
                 }
