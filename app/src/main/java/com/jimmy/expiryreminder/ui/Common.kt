@@ -1,6 +1,11 @@
 package com.jimmy.expiryreminder.ui
 
+import android.content.Context
 import android.graphics.BitmapFactory
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -51,8 +56,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -532,6 +539,67 @@ internal fun SectionHeader(title: String, modifier: Modifier = Modifier) {
         )
     }
 }
+
+// ---------------------------------------------------------------------------
+// 触感反馈
+// ---------------------------------------------------------------------------
+
+/**
+ * 「一档一下」的分段轻触反馈：主页搜索胶囊左/右滑切分类时每换一格发一次。
+ *
+ * API 34+ 交给系统：[HapticFeedbackType.SegmentTick]，OEM 针对自家马达调过手感，最稳。
+ *
+ * 更低版本不能依赖 HapticFeedbackType 的回落：Compose 会把 SegmentTick 降级成 CLOCK_TICK，
+ * 而不少 ROM 压根没实现这个常量——同一份代码在一加 15T 上震得很好，在红米 K30 Pro 变焦版
+ * （API 31）上一点反应都没有。所以这里直接走 Vibrator 单次 12ms：短到只是「轻点一下」，
+ * 有振幅控制的马达再压到 70/255，各机型观感一致。VIBRATE 是普通权限，Manifest 已声明。
+ *
+ * 返回的函数可以直接在手势循环里连调，同一帧多次会被系统合并成一次振动，不会叠成噪音。
+ */
+@Composable
+internal fun rememberSegmentTick(): () -> Unit {
+    val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
+    // 只有 34 以下才用 Vibrator 兜底，并先确认真有马达。
+    // 31 起 Vibrator 归 VibratorManager 管，直接取默认马达；更老的系统用已弃用的老常量。
+    val vibrator = remember(context) {
+        if (Build.VERSION.SDK_INT >= 34) {
+            null
+        } else {
+            val manager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                context.getSystemService(VibratorManager::class.java)
+            } else {
+                null
+            }
+            val v = if (manager != null) {
+                manager.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            }
+            v?.takeIf { it.hasVibrator() }
+        }
+    }
+    val amplitude = remember(vibrator) {
+        if (vibrator?.hasAmplitudeControl() == true) TickAmplitude
+        else VibrationEffect.DEFAULT_AMPLITUDE
+    }
+    return remember(haptic, vibrator, amplitude) {
+        {
+            if (Build.VERSION.SDK_INT >= 34) {
+                haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+            } else {
+                vibrator?.vibrate(VibrationEffect.createOneShot(TickMillis, amplitude))
+            }
+        }
+    }
+}
+
+/** 一次轻触的时长：12ms 约等于系统键盘按键的「哒」一下。 */
+private const val TickMillis = 12L
+
+/** 轻触振幅（0..255），只对支持振幅控制的马达生效。 */
+private const val TickAmplitude = 70
 
 /**
  * 主页搜索框同款磨砂胶囊输入框：无白底描边框，输入直接嵌在胶囊里。

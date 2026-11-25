@@ -48,6 +48,7 @@ import com.jimmy.expiryreminder.core.ExpiryStore
 import com.jimmy.expiryreminder.core.SettingsStore
 import com.jimmy.expiryreminder.notify.ReminderService
 import com.jimmy.expiryreminder.ui.AppTheme
+import com.jimmy.expiryreminder.ui.ArchiveScreen
 import com.jimmy.expiryreminder.ui.GestureExclusionStrip
 import com.jimmy.expiryreminder.ui.backDragGesture
 import com.jimmy.expiryreminder.ui.CategoryScreen
@@ -194,7 +195,7 @@ class MainActivity : ComponentActivity() {
                     val homeFilter = rememberSaveable(saver = HomeFilterState.Saver) {
                         HomeFilterState()
                     }
-                    // 归档页复用 HomeScreen（archivedMode = true），筛选状态独立一份，
+                    // 归档页是独立页面（ArchiveScreen），筛选状态同样独立一份，
                     // 与主页互不干扰（主页筛到「药品」时进归档仍看全部归档物品）
                     val archiveFilter = rememberSaveable(saver = HomeFilterState.Saver) {
                         HomeFilterState()
@@ -323,21 +324,12 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    // 归档页：与主页同一套 HomeScreen（archivedMode = true），
-                    // 新增/空间/分享等入口在归档模式下由页面内部隐藏，传空实现即可
+                    // 归档页：独立页面，只接管自己的筛选状态与返回入口
                     val archiveContent: @Composable () -> Unit = {
-                        HomeScreen(
+                        ArchiveScreen(
                             filter = archiveFilter,
-                            archivedMode = true,
                             onBack = { goBack() },
-                            onAdd = { _, _ -> },
-                            onOcr = { _, _ -> },
                             onEdit = { id -> navigate(Screen.Edit(id)) },
-                            onSettings = { navigate(Screen.Settings) },
-                            onCategories = {},
-                            onSpaces = {},
-                            onArchive = {},
-                            onShare = {},
                         )
                     }
 
