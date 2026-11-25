@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.0](https://github.com/nickynull/JExpiryReminder/compare/v2.2.0...v2.3.0) (2026-11-25)
+
+
+### Features
+
+* 全站 UI 风格统一（标题底色、内容卡、按钮、分组标题） ([0d60c59](https://github.com/nickynull/JExpiryReminder/commit/0d60c59fb2913d84ee9ae0edcff4e585d2f25bb5))
+
 ## [2.2.0](https://github.com/nickynull/JExpiryReminder/compare/v2.1.0...v2.2.0) (2026-11-24)
 
 
