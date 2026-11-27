@@ -237,6 +237,9 @@ internal data class ViewerState(
 @Composable
 fun HomeScreen(
     filter: HomeFilterState,
+    /** 小组件行点击带来的定位 id：滚动到该物品并短暂高亮，完成后回调 [onLocateDone]。 */
+    locateItemId: String? = null,
+    onLocateDone: () -> Unit = {},
     /** [defaultCategory] / [defaultSpace] 为当前筛选的分类与空间，无筛选时传 null。 */
     onAdd: (defaultCategory: String?, defaultSpace: String?) -> Unit,
     /** 图像识别入口：选图 → 识别 → 带结果进添加页。 */
@@ -444,6 +447,66 @@ fun HomeScreen(
         }
     }
 
+    // —— 小组件定位：行点击进主页后滚动到目标物品并短暂高亮 ——
+    // 只以 locateItemId 为 key：筛选复位、数据加载引起的重组不会取消进行中的滚动。
+    // 冷启动时数据异步加载、列表首帧可能还没测量，必须分步等待，否则滚动命令
+    // 打在空列表上会被静默吞掉（表现为「回了主页但没定位」，2026-11-26 教训）。
+    var highlightId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(locateItemId) {
+        val id = locateItemId ?: return@LaunchedEffect
+        // 1. 等数据就绪（冷启动最多等 5s）
+        var target: ExpiryItem? = null
+        var waited = 0
+        while (target == null && waited < 5000) {
+            target = state.items.firstOrNull { it.id == id && !it.archived }
+            if (target == null) {
+                kotlinx.coroutines.delay(100)
+                waited += 100
+            }
+        }
+        if (target == null) {
+            onLocateDone()
+            return@LaunchedEffect
+        }
+        // 2. 无条件复位筛选，保证物品可见；列表模式跟随物品类型
+        if (store.itemsInSpace(filter.space).none { it.id == id }) filter.space = Spaces.ALL
+        filter.keyword = ""
+        filter.category = HomeFilterState.ALL
+        filter.listMode = if (target.repeatEnabled) HomeFilterState.MODE_CYCLE
+        else HomeFilterState.MODE_COUNTDOWN
+        // 3. 用与列表同一口径（全部空间/全部分类/无关键词/物品对应模式）现算平铺下标；
+        //    不读协程闭包里的 grouped —— 筛选复位后那是旧值
+        val byStatus = store.itemsInSpace(Spaces.ALL)
+            .filter { it.repeatEnabled == target.repeatEnabled }
+            .groupBy { store.statusOf(it) }
+        var flat = -1
+        var acc = 0
+        for (s in ExpiryStatus.entries) {
+            val list = byStatus[s] ?: continue
+            val idx = list.indexOfFirst { it.id == id }
+            if (idx >= 0) {
+                flat = acc + 1 + idx
+                break
+            }
+            acc += 1 + list.size
+        }
+        if (flat < 0) {
+            onLocateDone()
+            return@LaunchedEffect
+        }
+        // 4. 等列表真实测量出足够条目（冷启动首帧前 totalItemsCount 是 0）
+        var guard = 0
+        while (listState.layoutInfo.totalItemsCount <= flat && guard < 90) {
+            kotlinx.coroutines.delay(16)
+            guard++
+        }
+        listState.animateScrollToItem(flat)
+        highlightId = id
+        kotlinx.coroutines.delay(1600)
+        highlightId = null
+        onLocateDone()
+    }
+
     // 新增/识别带上的分类：「全部分类」= 无筛选，交给新增页用默认分类；其余带上筛选的分类
     val targetCategory = filter.category.takeIf {
         it != HomeFilterState.ALL && store.categoryOf(it) != null
@@ -628,6 +691,8 @@ fun HomeScreen(
                                     store = store,
                                     selectMode = selectMode,
                                     selected = item.id in selected,
+                                    // 小组件定位：滚动到的行短暂高亮
+                                    highlight = item.id == highlightId,
                                     // 「全部空间」下显示归属空间，选定某个空间后行内不再重复
                                     showSpace = filter.space == Spaces.ALL,
                                     onClick = {
@@ -1791,6 +1856,8 @@ internal fun ItemRow(
     firstSwipeColor: Color = ArchiveSwipeColor,
     selectMode: Boolean,
     selected: Boolean,
+    /** 小组件定位高亮：true 时该行加深主色底并描边，消退由行内动画控制。 */
+    highlight: Boolean = false,
     /** 「全部空间」筛选下显示归属空间，否则列表里分不清哪件属于哪个空间。 */
     showSpace: Boolean,
     onClick: () -> Unit,
@@ -1870,6 +1937,13 @@ internal fun ItemRow(
     // 2026-11-25 全站内容卡统一 18dp（原 24dp），左滑底色/色条共用此值自动跟随
     val cardRadius = 18.dp
     val cardShape = RoundedCornerShape(cardRadius)
+
+    // 定位高亮：进位快、消退慢，视线能落到目标行
+    val highlightProgress by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (highlight) 1f else 0f,
+        animationSpec = tween(durationMillis = if (highlight) 100 else 600),
+        label = "locateHighlight",
+    )
 
     Box(Modifier.onSizeChanged { rowWidthPx = it.width }) {
         // ------------------------------------------ 左滑底色（第一段 / 删除段）
@@ -1953,12 +2027,19 @@ internal fun ItemRow(
                     spotColor = Color(0x26000000),
                 )
                 .background(
-                    // 选中色要和底色混成不透明色，否则会透出后面的内容
+                    // 选中色要和底色混成不透明色，否则会透出后面的内容；
+                    // 定位高亮在同一基础上再混入更多主色，消退时平滑回底色
                     if (selected) {
                         androidx.compose.ui.graphics.lerp(
                             MaterialTheme.colorScheme.surface,
                             MaterialTheme.colorScheme.primary,
                             0.10f,
+                        )
+                    } else if (highlightProgress > 0f) {
+                        androidx.compose.ui.graphics.lerp(
+                            MaterialTheme.colorScheme.surface,
+                            MaterialTheme.colorScheme.primary,
+                            0.10f + 0.20f * highlightProgress,
                         )
                     } else {
                         MaterialTheme.colorScheme.surface
@@ -1966,6 +2047,17 @@ internal fun ItemRow(
                     cardShape,
                 )
                 .clip(cardShape)
+                .then(
+                    if (highlightProgress > 0.02f) {
+                        Modifier.border(
+                            width = 2.dp,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = highlightProgress),
+                            shape = cardShape,
+                        )
+                    } else {
+                        Modifier
+                    },
+                )
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         ) {
             Row(

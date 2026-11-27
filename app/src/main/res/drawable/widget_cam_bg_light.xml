@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 浅色主题下的相机键底色：主色淡底圆形，与实心加号键形成主次关系 -->
+<!-- 浅色主题下的相机键底色：与应用图标底色一致（#FFC107），图标用深色保证对比度 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
-    <solid android:color="#FBF0E0" />
+    <solid android:color="#FFC107" />
 </shape>

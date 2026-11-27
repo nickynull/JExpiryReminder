@@ -48,8 +48,11 @@ object WidgetTheme {
     fun camBg(dark: Boolean): Int =
         if (dark) R.drawable.widget_cam_bg_dark else R.drawable.widget_cam_bg_light
 
-    /** 相机键图标色：与底色同色系，保证两种主题下都有足够对比度。 */
-    fun camIcon(dark: Boolean): Int = if (dark) 0xFFEBB563.toInt() else 0xFFC07A15.toInt()
+    /**
+     * 相机键图标色：白色（2026-11-26 用户要求参考待办组件用白图标；
+     * 底色保持品牌黄 #FFC107）。加号文字色在布局里同样为白。
+     */
+    fun camIcon(dark: Boolean): Int = 0xFFFFFFFF.toInt()
 
     /** 行底色按到期状态取；深色模式用低亮度版本，避免白块刺眼。 */
     fun rowBg(status: ExpiryStatus, dark: Boolean): Int = if (dark) {

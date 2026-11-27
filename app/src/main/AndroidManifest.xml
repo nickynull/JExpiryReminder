@@ -105,7 +105,7 @@
         <receiver
             android:name=".widget.ExpiryWidgetSmall"
             android:exported="true"
-            android:label="@string/widget_small_desc">
+            android:label="@string/widget_small_label">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
@@ -116,7 +116,7 @@
         <receiver
             android:name=".widget.ExpiryWidgetMedium"
             android:exported="true"
-            android:label="@string/widget_medium_desc">
+            android:label="@string/widget_medium_label">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
@@ -127,7 +127,7 @@
         <receiver
             android:name=".widget.ExpiryWidgetLarge"
             android:exported="true"
-            android:label="@string/widget_large_desc">
+            android:label="@string/widget_large_label">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>

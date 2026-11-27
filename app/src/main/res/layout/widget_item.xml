@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    列表行：单行紧凑式（参考 ColorOS 待办组件）——只保留物品名 + 剩余天数。
+    到期日期与「循环/倒计时」标注已移除（2026-11-26）。
+-->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_item_root"
     android:layout_width="match_parent"
@@ -10,76 +14,40 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:minHeight="54dp"
+        android:minHeight="26dp"
         android:paddingStart="10dp"
         android:paddingEnd="10dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="8dp">
+        android:paddingTop="2dp"
+        android:paddingBottom="2dp">
 
         <!-- 分类色条：src 是圆角白条，由 ExpiryWidgetService 用分类色着色 -->
         <ImageView
             android:id="@+id/widget_item_bar"
             android:layout_width="3dp"
-            android:layout_height="28dp"
+            android:layout_height="12dp"
             android:src="@drawable/widget_bar"
             android:scaleType="fitXY"
             android:contentDescription="@null" />
 
-        <LinearLayout
+        <TextView
+            android:id="@+id/widget_item_name"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:orientation="vertical"
-            android:paddingStart="10dp">
+            android:layout_marginStart="10dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="#1F2D3D"
+            android:textSize="13dp" />
 
-            <!-- 名字 + 行内类型标注（循环/倒计时）：标注由 Service 用 Span 拼进同一文本，
-                 永远紧贴名字尾部，长名字与标注一起省略号截断，位置天然对称 -->
-            <TextView
-                android:id="@+id/widget_item_name"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:textColor="#1F2D3D"
-                android:textSize="17sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/widget_item_added"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:paddingTop="2dp"
-                android:textColor="#8A94A6"
-                android:textSize="11sp" />
-        </LinearLayout>
-
-        <!-- 右侧「剩余天数 + 到期日期」两行 -->
-        <LinearLayout
+        <TextView
+            android:id="@+id/widget_item_days"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:gravity="end"
-            android:paddingStart="6dp">
-
-            <TextView
-                android:id="@+id/widget_item_days"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:maxLines="1"
-                android:textColor="#E6A23C"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/widget_item_expire"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:maxLines="1"
-                android:paddingTop="2dp"
-                android:textColor="#8A94A6"
-                android:textSize="11sp" />
-        </LinearLayout>
+            android:layout_marginStart="8dp"
+            android:maxLines="1"
+            android:textColor="#E6A23C"
+            android:textSize="12dp"
+            android:textStyle="bold" />
     </LinearLayout>
 </FrameLayout>

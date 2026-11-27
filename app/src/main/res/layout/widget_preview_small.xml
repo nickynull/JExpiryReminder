@@ -1,0 +1,225 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 2×2 小组件的选择器预览：紧凑形态（同 widget_compact/widget_item_compact），无统计数、行内只有名字 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/widget_preview_bg"
+    android:padding="8dp">
+
+    <!-- 标题行：单一总数 N 提醒 + 右侧圆钮（紧凑卡同样显示统计） -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingBottom="6dp">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="start|center_vertical"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:includeFontPadding="false"
+                android:text="15"
+                android:textColor="#1F2D3D"
+            android:textSize="16dp"
+            android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:text="提醒"
+                android:textColor="#E6A23C"
+                android:textSize="10dp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end|center_vertical"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/widget_cam_bg_light"
+                android:contentDescription="@null"
+                android:padding="4dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_widget_camera"
+                android:tint="#FFFFFF" />
+
+            <TextView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:background="@drawable/widget_add_bg"
+                android:gravity="center"
+                android:includeFontPadding="false"
+                android:text="+"
+                android:textColor="#FFFFFF"
+                android:textSize="15dp" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- 列表行：紧凑单行，与 widget_item_compact.xml 同款（minHeight 24dp、名 12dp、无天数） -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/widget_row_expired"
+        android:minHeight="24dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp">
+
+        <ImageView
+            android:layout_width="3dp"
+            android:layout_height="10dp"
+            android:src="@drawable/widget_bar"
+            android:scaleType="fitXY"
+            android:tint="#409EFF"
+            android:contentDescription="@null" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="除汗喷雾"
+            android:textColor="#1F2D3D"
+            android:textSize="12dp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/widget_row_soon"
+        android:minHeight="24dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp">
+
+        <ImageView
+            android:layout_width="3dp"
+            android:layout_height="10dp"
+            android:src="@drawable/widget_bar"
+            android:scaleType="fitXY"
+            android:tint="#409EFF"
+            android:contentDescription="@null" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="感冒灵颗粒"
+            android:textColor="#1F2D3D"
+            android:textSize="12dp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/widget_row_month"
+        android:minHeight="24dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp">
+
+        <ImageView
+            android:layout_width="3dp"
+            android:layout_height="10dp"
+            android:src="@drawable/widget_bar"
+            android:scaleType="fitXY"
+            android:tint="#E6A23C"
+            android:contentDescription="@null" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="面膜"
+            android:textColor="#1F2D3D"
+            android:textSize="12dp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/widget_row_normal"
+        android:minHeight="24dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp">
+
+        <ImageView
+            android:layout_width="3dp"
+            android:layout_height="10dp"
+            android:src="@drawable/widget_bar"
+            android:scaleType="fitXY"
+            android:tint="#67C23A"
+            android:contentDescription="@null" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="洗衣液"
+            android:textColor="#1F2D3D"
+            android:textSize="12dp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/widget_row_normal"
+        android:minHeight="24dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp">
+
+        <ImageView
+            android:layout_width="3dp"
+            android:layout_height="10dp"
+            android:src="@drawable/widget_bar"
+            android:scaleType="fitXY"
+            android:tint="#909399"
+            android:contentDescription="@null" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="咖啡豆"
+            android:textColor="#1F2D3D"
+            android:textSize="12dp" />
+    </LinearLayout>
+</LinearLayout>

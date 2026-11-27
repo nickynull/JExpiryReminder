@@ -25,8 +25,9 @@
         android:orientation="vertical"
         android:padding="12dp">
 
-        <!-- 标题行：倒计时 / 循环 两个数量分开显示，无切换交互 -->
+        <!-- 标题行：点头部空白区进应用主页 -->
         <FrameLayout
+            android:id="@+id/widget_header"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingBottom="8dp">
@@ -38,44 +39,25 @@
                 android:orientation="horizontal"
                 android:gravity="center_vertical">
 
+        <!-- 标题行：单一总数 N 提醒（标签用主色，对齐 ColorOS 待办样式） -->
                 <TextView
-                    android:id="@+id/widget_count_countdown"
+                    android:id="@+id/widget_count_total"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:includeFontPadding="false"
                     android:text="0"
                     android:textColor="#1F2D3D"
-                    android:textSize="22sp"
+                    android:textSize="16dp"
                     android:textStyle="bold" />
 
                 <TextView
-                    android:id="@+id/widget_label_countdown"
+                    android:id="@+id/widget_label_total"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="4dp"
-                    android:text="倒计时"
-                    android:textColor="#909399"
-                    android:textSize="10sp" />
-
-                <TextView
-                    android:id="@+id/widget_count_cycle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="12dp"
-                    android:includeFontPadding="false"
-                    android:text="0"
-                    android:textColor="#1F2D3D"
-                    android:textSize="22sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/widget_label_cycle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="4dp"
-                    android:text="循环"
+                    android:text="提醒"
                     android:textColor="#E6A23C"
-                    android:textSize="10sp" />
+                    android:textSize="10dp" />
             </LinearLayout>
 
             <!-- 相机键与新增键锚定右侧；底色与图标色由 Provider 按主题设置 -->
@@ -88,25 +70,25 @@
 
                 <ImageView
                     android:id="@+id/widget_camera"
-                    android:layout_width="30dp"
-                    android:layout_height="30dp"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
                     android:layout_marginEnd="8dp"
                     android:background="@drawable/widget_cam_bg_light"
                     android:contentDescription="拍照录入"
-                    android:padding="7dp"
+                    android:padding="4dp"
                     android:scaleType="fitCenter"
                     android:src="@drawable/ic_widget_camera" />
 
                 <TextView
                     android:id="@+id/widget_add"
-                    android:layout_width="30dp"
-                    android:layout_height="30dp"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
                     android:background="@drawable/widget_add_bg"
                     android:gravity="center"
                     android:includeFontPadding="false"
                     android:text="+"
                     android:textColor="#FFFFFF"
-                    android:textSize="20sp" />
+                    android:textSize="15dp" />
             </LinearLayout>
         </FrameLayout>
 
@@ -126,9 +108,9 @@
             android:layout_height="0dp"
             android:layout_weight="1"
             android:gravity="center"
-            android:text="暂无到期物品"
+            android:text="暂无物品"
             android:textColor="#8A94A6"
-            android:textSize="14sp"
+            android:textSize="12dp"
             android:visibility="gone" />
     </LinearLayout>
 </FrameLayout>

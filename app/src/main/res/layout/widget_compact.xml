@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    紧凑版头部布局：小组件被自由拖小（宽 < 200dp 或高 < 100dp）时由
+    ExpiryWidgetBase 按 AppWidgetOptions 动态切换使用，三个尺寸共用。
+    视图 id 必须与 widget_small/medium/large 完全一致，Provider 无需感知差异。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg"
+    android:clipToOutline="true">
+
+    <ImageView
+        android:id="@+id/widget_bg_image"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="@null"
+        android:scaleType="centerCrop"
+        android:visibility="gone" />
+
+    <FrameLayout
+        android:id="@+id/widget_scrim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:padding="8dp">
+
+        <!-- 标题行：单一总数 N 提醒（紧凑卡也显示）+ 右侧圆钮；点头部空白区进应用主页 -->
+        <FrameLayout
+            android:id="@+id/widget_header"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingBottom="6dp">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="start|center_vertical"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/widget_count_total"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:includeFontPadding="false"
+                    android:text="0"
+                    android:textColor="#1F2D3D"
+                    android:textSize="16dp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/widget_label_total"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:text="提醒"
+                    android:textColor="#E6A23C"
+                    android:textSize="10dp" />
+            </LinearLayout>
+
+            <!-- 相机键与新增键锚定右侧；底色与图标色由 Provider 按主题设置 -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="end|center_vertical"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <ImageView
+                    android:id="@+id/widget_camera"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/widget_cam_bg_light"
+                    android:contentDescription="拍照录入"
+                    android:padding="4dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_widget_camera" />
+
+                <TextView
+                    android:id="@+id/widget_add"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:background="@drawable/widget_add_bg"
+                    android:gravity="center"
+                    android:includeFontPadding="false"
+                    android:text="+"
+                    android:textColor="#FFFFFF"
+                    android:textSize="15dp" />
+            </LinearLayout>
+        </FrameLayout>
+
+        <!-- 可滚动列表：RemoteViewsService 提供，行内标注类型 -->
+        <ListView
+            android:id="@+id/widget_list"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:divider="@null"
+            android:dividerHeight="6dp"
+            android:scrollbars="none" />
+
+        <TextView
+            android:id="@+id/widget_empty"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="暂无物品"
+            android:textColor="#8A94A6"
+            android:textSize="12dp"
+            android:visibility="gone" />
+    </LinearLayout>
+</FrameLayout>

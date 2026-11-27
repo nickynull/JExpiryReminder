@@ -18,34 +18,25 @@ import com.jimmy.expiryreminder.core.Dates
 import com.jimmy.expiryreminder.core.ExpiryItem
 import com.jimmy.expiryreminder.core.ExpiryStatus
 import com.jimmy.expiryreminder.core.ImageStore
-import com.jimmy.expiryreminder.core.Spaces
 import org.json.JSONObject
 
 /** 小组件列表的一行数据（只读本地 data.json，不联网、不申请权限）。 */
 data class WidgetItem(
     val id: String,
     val name: String,
-    val expireAt: String,
     val daysText: String,
-    /** 「到期 yyyy-MM-dd」右侧第二行。 */
-    val expireText: String,
-    /** 「空间 · 添加日期」二合一副标题。 */
-    val subText: String,
     /** 左侧色条：分类色，与软件内列表卡片的色条同一个来源。 */
     val barColor: Int,
     /** 剩余天数字：到期状态色。 */
     val statusColor: Int,
     val rowBg: Int,
-    /** 循环任务标记：列表混排时在行内标注「循环」。 */
-    val repeatEnabled: Boolean,
 )
 
-/** 一次读取 data.json 后的完整快照：混排行数据 + 两类各自条数。 */
+/** 一次读取 data.json 后的完整快照：混排行数据 + 物品总数。 */
 data class WidgetSnapshot(
     /** 全部未归档物品，按到期日升序（混排，不按模式拆分）。 */
     val rows: List<WidgetItem>,
-    val countdownCount: Int,
-    val cycleCount: Int,
+    val itemCount: Int,
 )
 
 object WidgetData {
@@ -73,13 +64,13 @@ object WidgetData {
     @Synchronized
     fun load(context: Context): WidgetSnapshot {
         val file = ImageStore.dataFile(context)
-        if (!file.exists()) return WidgetSnapshot(emptyList(), 0, 0)
+        if (!file.exists()) return WidgetSnapshot(emptyList(), 0)
         val dark = WidgetTheme.isDark(context)
         val stamp = "${file.lastModified()}|${file.length()}|$dark"
         cache?.let { if (stamp == cacheStamp) return it }
         val root = runCatching { JSONObject(file.readText()) }.getOrNull()
-            ?: return WidgetSnapshot(emptyList(), 0, 0)
-        val arr = root.optJSONArray("items") ?: return WidgetSnapshot(emptyList(), 0, 0)
+            ?: return WidgetSnapshot(emptyList(), 0)
+        val arr = root.optJSONArray("items") ?: return WidgetSnapshot(emptyList(), 0)
 
         // 分类色条必须和软件内部一致：内置分类颜色 + 用户改色覆盖 + 自定义分类颜色。
         // 不能用到期状态色代替，状态色只用于行底色与剩余天数。
@@ -96,16 +87,7 @@ object WidgetData {
             }
         }
 
-        // 空间名同步显示，未分配也要明确写出来
-        val spaceLabels = HashMap<String, String>()
-        root.optJSONArray("spaces")?.let { spaces ->
-            for (i in 0 until spaces.length()) {
-                val obj = spaces.optJSONObject(i) ?: continue
-                val id = obj.optString("id")
-                val label = obj.optString("label")
-                if (id.isNotEmpty() && label.isNotEmpty()) spaceLabels[id] = label
-            }
-        }
+        // 空间信息不再展示在小组件行内（2026-11-26 用户要求去掉「空间 · 添加日期」副标题）
 
         val items = ArrayList<ExpiryItem>()
         for (i in 0 until arr.length()) {
@@ -130,25 +112,11 @@ object WidgetData {
                 days <= 30 -> ExpiryStatus.month
                 else -> ExpiryStatus.normal
             }
-            val addedText = runCatching {
-                val date = java.time.LocalDate.parse(item.createdAt.take(10))
-                "${date.monthValue}月${date.dayOfMonth}日添加"
-            }.getOrDefault("")
-            val spaceText = if (item.spaceId.isBlank()) Spaces.UNASSIGNED_LABEL
-            else spaceLabels[item.spaceId] ?: Spaces.UNASSIGNED_LABEL
-            val subText = listOf(spaceText, addedText)
-                .filter { it.isNotEmpty() }
-                .joinToString(" · ")
             rows += WidgetItem(
                 id = item.id,
                 name = item.name,
-                expireAt = item.expireAt,
                 daysText = if (item.expireAt.isBlank()) "未设置"
                 else Dates.describeRemaining(item.expireAt),
-                expireText = if (item.expireAt.isBlank()) "到期 未设置"
-                else if (item.repeatEnabled) "本周期到期 ${item.expireAt}"
-                else "到期 ${item.expireAt}",
-                subText = subText,
                 barColor = runCatching {
                     Color.parseColor(categoryColors[item.category] ?: "#909399")
                 }.getOrDefault(Color.GRAY),
@@ -156,13 +124,11 @@ object WidgetData {
                     Color.parseColor(WidgetTheme.statusHex(status, dark))
                 }.getOrDefault(Color.GRAY),
                 rowBg = WidgetTheme.rowBg(status, dark),
-                repeatEnabled = item.repeatEnabled,
             )
         }
         val snapshot = WidgetSnapshot(
             rows = rows,
-            countdownCount = items.count { !it.repeatEnabled },
-            cycleCount = items.count { it.repeatEnabled },
+            itemCount = items.size,
         )
         cacheStamp = stamp
         cache = snapshot
@@ -187,7 +153,11 @@ object WidgetData {
  */
 abstract class ExpiryWidgetBase : AppWidgetProvider() {
 
+    /** 正常尺寸布局。 */
     protected abstract val layoutRes: Int
+
+    /** 拖小后的紧凑布局（三个尺寸共用 widget_compact）。 */
+    protected abstract val compactLayoutRes: Int
 
     override fun onUpdate(
         context: Context,
@@ -203,7 +173,7 @@ abstract class ExpiryWidgetBase : AppWidgetProvider() {
         appWidgetId: Int,
         newOptions: Bundle?,
     ) {
-        // ColorOS 17 允许自由拖动改尺寸：重渲染以适配新高度
+        // ColorOS 17 允许自由拖动改尺寸：重渲染以适配新高度，拖小后切换紧凑布局
         updateOne(context, appWidgetManager, appWidgetId)
     }
 
@@ -219,18 +189,17 @@ abstract class ExpiryWidgetBase : AppWidgetProvider() {
 
     @Suppress("DEPRECATION")
     private fun updateOne(context: Context, mgr: AppWidgetManager, id: Int) {
-        val views = RemoteViews(context.packageName, layoutRes)
+        val compact = isCompact(mgr.getAppWidgetOptions(id))
+        val views = RemoteViews(context.packageName, if (compact) compactLayoutRes else layoutRes)
         val snapshot = WidgetData.load(context)
         val dark = WidgetTheme.isDark(context)
         val palette = WidgetTheme.palette(dark)
 
-        // 头部两个计数分开显示：N 倒计时 / M 循环；「循环」标签用主色，与行内标注一致
-        views.setTextViewText(R.id.widget_count_countdown, snapshot.countdownCount.toString())
-        views.setTextColor(R.id.widget_count_countdown, palette.title)
-        views.setTextColor(R.id.widget_label_countdown, palette.muted)
-        views.setTextViewText(R.id.widget_count_cycle, snapshot.cycleCount.toString())
-        views.setTextColor(R.id.widget_count_cycle, palette.title)
-        views.setTextColor(R.id.widget_label_cycle, palette.accent)
+        // 头部单一总数：N 提醒（倒计时 + 循环合并计数），标签用主色对齐 ColorOS 待办。
+        // 四个布局（含紧凑卡）都有统计视图，直接赋值
+        views.setTextViewText(R.id.widget_count_total, snapshot.itemCount.toString())
+        views.setTextColor(R.id.widget_count_total, palette.title)
+        views.setTextColor(R.id.widget_label_total, palette.accent)
 
         views.setTextColor(R.id.widget_empty, palette.muted)
         views.setOnClickPendingIntent(R.id.widget_add, addPendingIntent(context))
@@ -238,7 +207,9 @@ abstract class ExpiryWidgetBase : AppWidgetProvider() {
         // 无法用它触发新增；空态区域整块可点，作为无物品时最直接的添加入口
         views.setOnClickPendingIntent(R.id.widget_empty, addPendingIntent(context))
         views.setOnClickPendingIntent(R.id.widget_camera, cameraPendingIntent(context))
-        // 相机键：圆形底与图标色都跟随应用主题（图标用 colorFilter 着色，不影响底形）
+        // 点头部空白区（计数/标签周围）直接进应用主页；相机键与「+」的子控件点击优先于父容器
+        views.setOnClickPendingIntent(R.id.widget_header, mainPendingIntent(context))
+        // 相机键：圆底与应用图标底色一致（#FFC107），图标白色（colorFilter 着色，不影响底形）
         views.setInt(R.id.widget_camera, "setBackgroundResource", WidgetTheme.camBg(dark))
         views.setInt(R.id.widget_camera, "setColorFilter", WidgetTheme.camIcon(dark))
 
@@ -264,7 +235,7 @@ abstract class ExpiryWidgetBase : AppWidgetProvider() {
         mgr.notifyAppWidgetViewDataChanged(id, R.id.widget_list)
     }
 
-    /** 行点击模板：fillInIntent 由 Factory 带物品 id，打开后直接进编辑页。 */
+    /** 行点击模板：fillInIntent 由 Factory 带物品 id，进主页并滚动定位该物品。 */
     private fun listTemplate(context: Context): PendingIntent =
         PendingIntent.getActivity(
             context, 1,
@@ -294,9 +265,34 @@ abstract class ExpiryWidgetBase : AppWidgetProvider() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
+    /** 点头部进应用主页：不开新任务栈顶行为，回到正常主页。 */
+    private fun mainPendingIntent(context: Context): PendingIntent =
+        PendingIntent.getActivity(
+            context, 7003,
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
     companion object {
         /** 应用内数据变化时发的私有刷新广播，不对外暴露。 */
         const val ACTION_REFRESH = "com.jimmy.expiryreminder.action.WIDGET_REFRESH"
+
+        /**
+         * 紧凑判定：只按宽度判（当前宽 < 250dp，两格宽）。
+         * 2026-11-26 教训：原实现还有「MIN_HEIGHT < 100dp」分支，但
+         * OPTION_APPWIDGET_MIN_HEIGHT 是横屏下的最小高度（启动器上报的最小边），
+         * 竖屏很高的卡片横屏高度可能不足 100dp，导致 Provider 误判紧凑、
+         * 套上没有统计视图的 widget_compact 头部——而 Factory 在另一次
+         * onDataSetChanged 时判为非紧凑、出正常行，形成「头部无统计数、
+         * 行有剩余天数」的混合状态（用户报过「统计数量莫名消失」）。
+         * MIN_WIDTH 是竖屏宽度，可靠；高度不再参与判定。
+         */
+        fun isCompact(options: Bundle?): Boolean {
+            if (options == null) return false
+            val w = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, Int.MAX_VALUE)
+            return w in 1..249
+        }
 
         /** App 数据变化时调用：让三个尺寸的小组件一起刷新。 */
         fun refreshAll(context: Context) {
@@ -321,14 +317,17 @@ abstract class ExpiryWidgetBase : AppWidgetProvider() {
 /** 2×2 紧凑：只显示最紧急的几条，列表可滚动。 */
 class ExpiryWidgetSmall : ExpiryWidgetBase() {
     override val layoutRes: Int = R.layout.widget_small
+    override val compactLayoutRes: Int = R.layout.widget_compact
 }
 
 /** 4×2 中等：一屏能看更多条目。 */
 class ExpiryWidgetMedium : ExpiryWidgetBase() {
     override val layoutRes: Int = R.layout.widget_medium
+    override val compactLayoutRes: Int = R.layout.widget_compact
 }
 
 /** 4×4 大：完整清单 + 状态说明。 */
 class ExpiryWidgetLarge : ExpiryWidgetBase() {
     override val layoutRes: Int = R.layout.widget_large
+    override val compactLayoutRes: Int = R.layout.widget_compact
 }

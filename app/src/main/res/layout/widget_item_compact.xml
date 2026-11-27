@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    紧凑版列表行（小组件拖窄到两格宽时使用）：只显示物品名。
+    注意：本布局没有 widget_item_days，Service 的赋值代码按 compact 分流。
+    视图 id 必须与 widget_item.xml 一致（除已省略的天数）。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_item_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/widget_row_normal">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:minHeight="24dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="2dp"
+        android:paddingBottom="2dp">
+
+        <ImageView
+            android:id="@+id/widget_item_bar"
+            android:layout_width="3dp"
+            android:layout_height="10dp"
+            android:src="@drawable/widget_bar"
+            android:scaleType="fitXY"
+            android:contentDescription="@null" />
+
+        <TextView
+            android:id="@+id/widget_item_name"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="#1F2D3D"
+            android:textSize="12dp" />
+    </LinearLayout>
+</FrameLayout>

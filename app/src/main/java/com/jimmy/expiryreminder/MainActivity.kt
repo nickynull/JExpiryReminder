@@ -111,6 +111,9 @@ class MainActivity : ComponentActivity() {
      */
     private val pendingNav = mutableStateOf<Intent?>(null)
 
+    /** 小组件行点击带来的「定位物品」id：进主页后滚动到该行并短暂高亮，消费后由页面层清空。 */
+    val pendingLocate = mutableStateOf<String?>(null)
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         // 覆盖 Activity.intent，避免后续读取到上一次的旧 extra
@@ -121,9 +124,8 @@ class MainActivity : ComponentActivity() {
     /** 把启动 Intent 翻译成目标页面；普通点图标启动返回 null（停在主页）。 */
     private fun resolveScreen(intent: Intent?): Screen? {
         if (intent == null) return null
-        // 桌面小组件：指定物品 / 新增 / 拍照
-        intent.getStringExtra(EXTRA_OPEN_ITEM_ID)?.takeIf { it.isNotEmpty() }
-            ?.let { return Screen.Edit(itemId = it) }
+        // 桌面小组件行点击：不再进编辑页，改为回主页定位该物品
+        // （由 setContent 的 LaunchedEffect 读 EXTRA_OPEN_ITEM_ID 处理，不走这里）
         if (intent.getBooleanExtra(EXTRA_OPEN_ADD, false)) return Screen.Edit(itemId = null)
         if (intent.getBooleanExtra(EXTRA_OPEN_CAMERA, false)) return Screen.PickImages()
         // 长按桌面图标的快捷方式
@@ -136,6 +138,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 冷启动带定位 extra（小组件行点击首次拉起应用）：种子进 pendingLocate，
+        // 首屏 Home 组合后消费；热启动（onNewIntent）在下面的 LaunchedEffect 里处理
+        pendingLocate.value = intent?.getStringExtra(EXTRA_OPEN_ITEM_ID)?.takeIf { it.isNotEmpty() }
         // 声明 edge-to-edge，并把系统栏图标外观跟随应用主题：
         // 浅色主题下用深色图标（默认白色图标在白底头部上不可见）
         enableEdgeToEdge(
@@ -187,7 +192,16 @@ class MainActivity : ComponentActivity() {
                     // 系统走 onNewIntent，这里消费掉这条「一次性跳转指令」再清空。
                     val navIntent by pendingNav
                     LaunchedEffect(navIntent) {
-                        val target = resolveScreen(navIntent) ?: return@LaunchedEffect
+                        val intent = navIntent ?: return@LaunchedEffect
+                        // 小组件行点击：带物品 id → 回主页定位（不进编辑页）
+                        val locate = intent.getStringExtra(EXTRA_OPEN_ITEM_ID)?.takeIf { it.isNotEmpty() }
+                        if (locate != null) {
+                            pendingLocate.value = locate
+                            screen = Screen.Home
+                            pendingNav.value = null
+                            return@LaunchedEffect
+                        }
+                        val target = resolveScreen(intent) ?: return@LaunchedEffect
                         screen = target
                         pendingNav.value = null
                     }
@@ -302,6 +316,8 @@ class MainActivity : ComponentActivity() {
                     val homeContent: @Composable () -> Unit = {
                         HomeScreen(
                             filter = homeFilter,
+                            locateItemId = pendingLocate.value,
+                            onLocateDone = { pendingLocate.value = null },
                             onAdd = { defaultCategory, defaultSpace ->
                                 navigate(Screen.Edit(
                                     itemId = null,
